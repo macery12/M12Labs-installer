@@ -72,7 +72,8 @@ def install_menu() -> None:
 
         choice = input("\nSelect an option: ").strip()
         if choice.isdigit() and 1 <= int(choice) <= len(page_items):
-            item_index = int(choice) - 1
+            parsed_choice = int(choice)
+            item_index = parsed_choice - 1
             selected = page_items[item_index]
             print(f"\nInstall placeholder for: {selected}")
             print("Real install logic will be added in a future phase.")
@@ -103,9 +104,9 @@ def uninstall_menu(installed_extensions: list[str]) -> None:
         if (
             installed_extensions
             and choice.isdigit()
-            and 1 <= int(choice) <= len(installed_extensions)
+            and 1 <= (parsed_choice := int(choice)) <= len(installed_extensions)
         ):
-            selected = installed_extensions[int(choice) - 1]
+            selected = installed_extensions[parsed_choice - 1]
             print(f"\nUninstall placeholder for: {selected}")
             print("Real uninstall logic will be added in a future phase.")
         else:
@@ -131,8 +132,11 @@ def update_menu(installed_extensions: list[str]) -> None:
         if choice == "a" and installed_extensions:
             print("\nUpdate-all placeholder.")
             print("Real update logic will be added in a future phase.")
-        elif choice.isdigit() and 1 <= int(choice) <= len(installed_extensions):
-            selected = installed_extensions[int(choice) - 1]
+        elif (
+            choice.isdigit()
+            and 1 <= (parsed_choice := int(choice)) <= len(installed_extensions)
+        ):
+            selected = installed_extensions[parsed_choice - 1]
             print(f"\nUpdate placeholder for: {selected}")
             print("Real update logic will be added in a future phase.")
         else:
