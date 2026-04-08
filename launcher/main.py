@@ -11,12 +11,11 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-DEFAULT_PLACEHOLDER_EXTENSION_COUNT = 12
+PLACEHOLDER_EXTENSION_COUNT = 12
 EXTENSION_CATALOG = [
-    f"Extension {i}" for i in range(1, DEFAULT_PLACEHOLDER_EXTENSION_COUNT + 1)
+    f"Extension {i}" for i in range(1, PLACEHOLDER_EXTENSION_COUNT + 1)
 ]
 PAGE_SIZE = 6
-installed_extensions: list[str] = []
 
 
 def clear_screen() -> None:
@@ -36,6 +35,7 @@ def run_command(command: Sequence[str], cwd: Path) -> bool:
         completed = subprocess.run(command, cwd=cwd, check=False)
         return completed.returncode == 0
     except FileNotFoundError:
+        print(f"Command not found: {command[0]}")
         return False
 
 
@@ -46,6 +46,12 @@ def ensure_linux() -> bool:
     return True
 
 
+def calculate_total_pages(item_count: int, page_size: int) -> int:
+    if item_count <= 0:
+        return 1
+    return (item_count - 1) // page_size + 1
+
+
 def install_menu() -> None:
     page = 0
     while True:
@@ -53,7 +59,7 @@ def install_menu() -> None:
         start = page * PAGE_SIZE
         end = start + PAGE_SIZE
         page_items = EXTENSION_CATALOG[start:end]
-        total_pages = max((len(EXTENSION_CATALOG) - 1) // PAGE_SIZE + 1, 1)
+        total_pages = calculate_total_pages(len(EXTENSION_CATALOG), PAGE_SIZE)
         next_option_number = len(page_items) + 1
         back_option_number = len(page_items) + 2
 
@@ -80,7 +86,7 @@ def install_menu() -> None:
             wait_for_enter()
 
 
-def uninstall_menu() -> None:
+def uninstall_menu(installed_extensions: list[str]) -> None:
     while True:
         clear_screen()
         print("Uninstall extensions (template)\n")
@@ -103,7 +109,7 @@ def uninstall_menu() -> None:
         wait_for_enter()
 
 
-def update_menu() -> None:
+def update_menu(installed_extensions: list[str]) -> None:
     while True:
         clear_screen()
         print("Update extensions (template)\n")
@@ -165,7 +171,9 @@ def build_only() -> None:
         return
 
     install_ok = run_command(["pnpm", "install"], cwd=project_root)
-    build_ok = run_command(["pnpm", "build"], cwd=project_root) if install_ok else False
+    build_ok = False
+    if install_ok:
+        build_ok = run_command(["pnpm", "build"], cwd=project_root)
 
     if install_ok and build_ok:
         print("\nBuild flow completed successfully.")
@@ -177,6 +185,7 @@ def build_only() -> None:
 def main() -> int:
     if not ensure_linux():
         return 1
+    installed_extensions: list[str] = []
 
     while True:
         clear_screen()
@@ -192,9 +201,9 @@ def main() -> int:
         if choice == "1":
             install_menu()
         elif choice == "2":
-            uninstall_menu()
+            uninstall_menu(installed_extensions)
         elif choice == "3":
-            update_menu()
+            update_menu(installed_extensions)
         elif choice == "4":
             check_menu()
         elif choice == "5":
