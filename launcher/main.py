@@ -10,9 +10,9 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-AVAILABLE_MODS = [f"Mod {i}" for i in range(1, 13)]
+AVAILABLE_EXTENSIONS = [f"Extension {i}" for i in range(1, 13)]
 PAGE_SIZE = 6
-INSTALLED_MODS: list[str] = []
+installed_extensions: list[str] = []
 
 
 def clear_screen() -> None:
@@ -45,29 +45,28 @@ def install_menu() -> None:
         clear_screen()
         start = page * PAGE_SIZE
         end = start + PAGE_SIZE
-        page_items = AVAILABLE_MODS[start:end]
-        total_pages = max((len(AVAILABLE_MODS) - 1) // PAGE_SIZE + 1, 1)
+        page_items = AVAILABLE_EXTENSIONS[start:end]
+        total_pages = max((len(AVAILABLE_EXTENSIONS) - 1) // PAGE_SIZE + 1, 1)
+        next_option_number = len(page_items) + 1
+        back_option_number = len(page_items) + 2
 
         print("Install extensions (template)")
         print(f"Page {page + 1}/{total_pages}\n")
-        for index, mod in enumerate(page_items, start=1):
-            print(f"{index}. {mod}")
-        print("7. Next page")
-        print("8. Back")
+        for index, extension_name in enumerate(page_items, start=1):
+            print(f"{index}. {extension_name}")
+        print(f"{next_option_number}. Next page")
+        print(f"{back_option_number}. Back")
 
         choice = input("\nSelect an option: ").strip()
-        if choice in {"1", "2", "3", "4", "5", "6"}:
+        if choice.isdigit() and 1 <= int(choice) <= len(page_items):
             item_index = int(choice) - 1
-            if item_index < len(page_items):
-                selected = page_items[item_index]
-                print(f"\nInstall placeholder for: {selected}")
-                print("Real install logic will be added in a future phase.")
-            else:
-                print("\nNo mod is mapped to that number on this page.")
+            selected = page_items[item_index]
+            print(f"\nInstall placeholder for: {selected}")
+            print("Real install logic will be added in a future phase.")
             wait_for_enter()
-        elif choice == "7":
+        elif choice == str(next_option_number):
             page = (page + 1) % total_pages
-        elif choice == "8":
+        elif choice == str(back_option_number):
             return
         else:
             print("\nInvalid option.")
@@ -78,18 +77,18 @@ def uninstall_menu() -> None:
     while True:
         clear_screen()
         print("Uninstall extensions (template)\n")
-        if INSTALLED_MODS:
-            for index, mod in enumerate(INSTALLED_MODS, start=1):
-                print(f"{index}. {mod}")
+        if installed_extensions:
+            for index, extension_name in enumerate(installed_extensions, start=1):
+                print(f"{index}. {extension_name}")
         else:
-            print("No tracked installed mods yet.")
+            print("No tracked installed extensions yet.")
         print("B. Back")
 
         choice = input("\nSelect an option: ").strip().lower()
         if choice == "b":
             return
-        if choice.isdigit() and 1 <= int(choice) <= len(INSTALLED_MODS):
-            selected = INSTALLED_MODS[int(choice) - 1]
+        if choice.isdigit() and 1 <= int(choice) <= len(installed_extensions):
+            selected = installed_extensions[int(choice) - 1]
             print(f"\nUninstall placeholder for: {selected}")
             print("Real uninstall logic will be added in a future phase.")
         else:
@@ -101,22 +100,22 @@ def update_menu() -> None:
     while True:
         clear_screen()
         print("Update extensions (template)\n")
-        if INSTALLED_MODS:
-            for index, mod in enumerate(INSTALLED_MODS, start=1):
-                print(f"{index}. {mod}")
+        if installed_extensions:
+            for index, extension_name in enumerate(installed_extensions, start=1):
+                print(f"{index}. {extension_name}")
             print("A. Update all")
         else:
-            print("No tracked installed mods yet.")
+            print("No tracked installed extensions yet.")
         print("B. Back")
 
         choice = input("\nSelect an option: ").strip().lower()
         if choice == "b":
             return
-        if choice == "a" and INSTALLED_MODS:
+        if choice == "a" and installed_extensions:
             print("\nUpdate-all placeholder.")
             print("Real update logic will be added in a future phase.")
-        elif choice.isdigit() and 1 <= int(choice) <= len(INSTALLED_MODS):
-            selected = INSTALLED_MODS[int(choice) - 1]
+        elif choice.isdigit() and 1 <= int(choice) <= len(installed_extensions):
+            selected = installed_extensions[int(choice) - 1]
             print(f"\nUpdate placeholder for: {selected}")
             print("Real update logic will be added in a future phase.")
         else:
