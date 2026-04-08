@@ -7,16 +7,23 @@ import platform
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import Sequence
 
-AVAILABLE_EXTENSIONS = [f"Extension {i}" for i in range(1, 13)]
+DEFAULT_PLACEHOLDER_EXTENSION_COUNT = 12
+EXTENSION_CATALOG = [
+    f"Extension {i}" for i in range(1, DEFAULT_PLACEHOLDER_EXTENSION_COUNT + 1)
+]
 PAGE_SIZE = 6
 installed_extensions: list[str] = []
 
 
 def clear_screen() -> None:
-    print("\033c", end="")
+    if sys.stdout.isatty() and os.getenv("TERM"):
+        os.system("clear")
+    else:
+        print("\n" * 2, end="")
 
 
 def wait_for_enter() -> None:
@@ -45,8 +52,8 @@ def install_menu() -> None:
         clear_screen()
         start = page * PAGE_SIZE
         end = start + PAGE_SIZE
-        page_items = AVAILABLE_EXTENSIONS[start:end]
-        total_pages = max((len(AVAILABLE_EXTENSIONS) - 1) // PAGE_SIZE + 1, 1)
+        page_items = EXTENSION_CATALOG[start:end]
+        total_pages = max((len(EXTENSION_CATALOG) - 1) // PAGE_SIZE + 1, 1)
         next_option_number = len(page_items) + 1
         back_option_number = len(page_items) + 2
 
@@ -140,12 +147,12 @@ def build_only() -> None:
         wait_for_enter()
         return
 
-    node_bin = shutil.which("node")
-    pnpm_bin = shutil.which("pnpm")
-    print(f"Node: {'FOUND' if node_bin else 'NOT FOUND'}")
-    print(f"pnpm: {'FOUND' if pnpm_bin else 'NOT FOUND'}")
+    node_path = shutil.which("node")
+    pnpm_path = shutil.which("pnpm")
+    print(f"Node: {'FOUND' if node_path else 'NOT FOUND'}")
+    print(f"pnpm: {'FOUND' if pnpm_path else 'NOT FOUND'}")
 
-    if not node_bin or not pnpm_bin:
+    if not node_path or not pnpm_path:
         print("\nInstall missing dependencies and try again.")
         wait_for_enter()
         return
