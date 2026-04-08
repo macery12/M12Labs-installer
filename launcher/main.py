@@ -20,7 +20,7 @@ PAGE_SIZE = 6
 
 def clear_screen() -> None:
     if sys.stdout.isatty() and os.getenv("TERM"):
-        os.system("clear")
+        subprocess.run(["clear"], check=False)
     else:
         print("\n" * 2, end="")
 
@@ -100,7 +100,11 @@ def uninstall_menu(installed_extensions: list[str]) -> None:
         choice = input("\nSelect an option: ").strip().lower()
         if choice == "b":
             return
-        if choice.isdigit() and 1 <= int(choice) <= len(installed_extensions):
+        if (
+            installed_extensions
+            and choice.isdigit()
+            and 1 <= int(choice) <= len(installed_extensions)
+        ):
             selected = installed_extensions[int(choice) - 1]
             print(f"\nUninstall placeholder for: {selected}")
             print("Real uninstall logic will be added in a future phase.")
@@ -171,11 +175,13 @@ def build_only() -> None:
         return
 
     install_ok = run_command(["pnpm", "install"], cwd=project_root)
-    build_ok = False
-    if install_ok:
-        build_ok = run_command(["pnpm", "build"], cwd=project_root)
+    if not install_ok:
+        print("\nBuild flow failed. `pnpm install` did not complete successfully.")
+        wait_for_enter()
+        return
 
-    if install_ok and build_ok:
+    build_ok = run_command(["pnpm", "build"], cwd=project_root)
+    if build_ok:
         print("\nBuild flow completed successfully.")
     else:
         print("\nBuild flow failed. Check command output above.")
