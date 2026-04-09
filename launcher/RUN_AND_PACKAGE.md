@@ -20,11 +20,12 @@ Menu option `5. Build only` does:
 2. Verify `package.json` exists at `/root/M12Labs-Extension` before doing anything else
 3. Stop immediately with this message if missing:
    - `No package.json found in: /root/M12Labs-Extension`
-4. Show a setup notice explaining dependency preparation may take 1–2 minutes, then pause briefly
-5. Verify `node` is installed (auto-installs if missing)
-6. Verify `pnpm` is installed (auto-installs if missing)
-7. Run `pnpm install`
-8. Run `pnpm build`
+4. Optional override: set `M12LABS_PROJECT_ROOT` to target a different panel root path
+5. Show a setup notice explaining dependency preparation may take 1–2 minutes, then pause briefly (only when Node.js/pnpm are missing)
+6. Verify `node` is installed (auto-installs if missing)
+7. Verify `pnpm` is installed (auto-installs if missing)
+8. Run `pnpm install`
+9. Run `pnpm build`
 
 The expected frontend build command is from `package.json`:
 - `pnpm build` -> `vite build`

@@ -173,6 +173,7 @@ def build_only(project_root: Path | None = None) -> None:
     except OSError as error:
         print(f"Failed to check package.json in: {resolved_project_root}")
         print("Unable to access path. Verify the directory exists and you have read permissions.")
+        print(f"You can override the default path with {PROJECT_ROOT_ENV}.")
         print(f"Path access error: {error}")
         return
 
