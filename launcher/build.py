@@ -11,6 +11,7 @@ from typing import Sequence
 
 INSTALL_NOTICE_DELAY_SECONDS = 2
 DEFAULT_PROJECT_ROOT = Path("/root/M12Labs-Extension")
+PROJECT_ROOT_ENV = "M12LABS_PROJECT_ROOT"
 
 
 def run_command(command: Sequence[str], cwd: Path) -> bool:
@@ -161,18 +162,25 @@ def show_install_notice() -> None:
 
 
 def build_only(project_root: Path | None = None) -> None:
-    resolved_project_root = project_root or DEFAULT_PROJECT_ROOT
+    if project_root:
+        resolved_project_root = project_root
+    else:
+        resolved_project_root = Path(os.getenv(PROJECT_ROOT_ENV, str(DEFAULT_PROJECT_ROOT)))
     package_json = resolved_project_root / "package.json"
     try:
         package_json_exists = package_json.exists()
-    except OSError:
-        package_json_exists = False
+    except OSError as error:
+        print(f"No package.json found in: {resolved_project_root}")
+        print(f"Path check error: {error}")
+        return
 
     if not package_json_exists:
         print(f"No package.json found in: {resolved_project_root}")
         return
 
-    show_install_notice()
+    missing_dependencies = not shutil.which("node") or not shutil.which("pnpm")
+    if missing_dependencies:
+        show_install_notice()
 
     if not ensure_node_installed():
         print("\nBuild flow failed: Node.js is required but could not be prepared.")
