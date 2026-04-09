@@ -152,8 +152,7 @@ def ensure_pnpm_installed() -> bool:
                 print("pnpm installation completed via corepack.")
                 return True
 
-    npm_path = shutil.which("npm")
-    if npm_path and run_command_no_cwd(["npm", "install", "-g", "pnpm@latest"]):
+    if shutil.which("npm") and run_command_no_cwd(["npm", "install", "-g", "pnpm@latest"]):
         if shutil.which("pnpm"):
             print("pnpm installation completed via npm.")
             return True
