@@ -66,7 +66,12 @@ def get_package_manager() -> str | None:
 
 
 def with_privilege(command: Sequence[str]) -> list[str] | None:
-    if os.geteuid() == 0:
+    try:
+        is_root = os.geteuid() == 0
+    except AttributeError:
+        is_root = False
+
+    if is_root:
         return list(command)
     sudo_path = shutil.which("sudo")
     if sudo_path:
@@ -121,7 +126,7 @@ def ensure_node_installed() -> bool:
     elif package_manager == "pacman":
         package_sets = [["nodejs", "npm"], ["nodejs"]]
     elif package_manager == "apk":
-        package_sets = [["nodejs", "npm"], ["nodejs", "nodejs-current", "npm"]]
+        package_sets = [["nodejs", "npm"], ["nodejs-lts", "npm"], ["nodejs"]]
     else:
         package_sets = [["nodejs", "npm"], ["nodejs"]]
 
@@ -297,6 +302,7 @@ def build_only() -> None:
         wait_for_enter()
         return
 
+    # Launcher lives under `<repo>/launcher`; build commands target repo root.
     project_root = Path(__file__).resolve().parent.parent
     if not (project_root / "package.json").exists():
         print(f"\nNo package.json found in: {project_root}")
