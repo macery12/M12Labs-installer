@@ -110,15 +110,35 @@ def _fetch_remote_manifest(version: str) -> dict | None:
     (see :func:`load_manifest`) before being interpolated into the URL, which
     prevents SSRF via a manipulated ``config/app.php`` version string.
     Returns the parsed JSON dict, or ``None`` on any error.
+
+    Prints live progress (URL, HTTP status, or error reason) to stdout so the
+    user is not left waiting at a blank screen during the network call.
     """
     url = RELEASE_MANIFEST_URL.format(version=version)
+    print(f"  Fetching manifest from {url} ...", end=" ", flush=True)
     try:
         with urllib.request.urlopen(url, timeout=MANIFEST_TIMEOUT) as resp:  # noqa: S310
-            if resp.status == 200:
-                return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
-        pass
-    return None
+            status = resp.status
+            if status == 200:
+                try:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    print(f"HTTP {status} OK")
+                    return data
+                except json.JSONDecodeError as exc:
+                    print(f"HTTP {status} OK (parse error: {exc})")
+                    return None
+            else:
+                print(f"HTTP {status} (unexpected – skipping remote manifest)")
+                return None
+    except urllib.error.HTTPError as exc:
+        print(f"HTTP {exc.code} {exc.reason}")
+        return None
+    except urllib.error.URLError as exc:
+        print(f"network error: {exc.reason}")
+        return None
+    except OSError as exc:
+        print(f"OS error: {exc}")
+        return None
 
 
 def _load_local_manifest(install_root: Path) -> dict | None:
@@ -138,6 +158,9 @@ def load_manifest(install_root: Path) -> tuple[dict | None, str]:
 
     Returns ``(manifest_dict, source_description)``.  When no manifest can be
     found, ``manifest_dict`` is ``None``.
+
+    Progress and fallback notices are printed to stdout so the user can follow
+    what is happening without enabling detailed mode.
     """
     version = get_panel_version(install_root)
     if version and _VERSION_RE.match(version):
@@ -145,11 +168,18 @@ def load_manifest(install_root: Path) -> tuple[dict | None, str]:
         if remote is not None:
             url = RELEASE_MANIFEST_URL.format(version=version)
             return remote, f"release manifest v{version} ({url})"
+        print("  Remote manifest unavailable – falling back to local manifest")
+    elif version:
+        # Version string exists but did not match the strict X.Y.Z pattern.
+        print(f"  Version string {version!r} is not a valid X.Y.Z release – skipping remote manifest")
+    else:
+        print("  No version found in config/app.php – skipping remote manifest")
 
     local = _load_local_manifest(install_root)
     if local is not None:
         return local, f"local manifest ({install_root / 'manifest.json'})"
 
+    print("  No local manifest.json found either")
     return None, "no manifest available"
 
 
