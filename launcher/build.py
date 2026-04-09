@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -9,25 +10,41 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+_logger = logging.getLogger("m12labs")
+
 INSTALL_NOTICE_DELAY_SECONDS = 2
 
 
 def run_command(command: Sequence[str], cwd: Path) -> bool:
+    _logger.debug("Running command: %s (cwd: %s)", " ".join(command), cwd)
     print(f"\n$ {' '.join(command)}")
     try:
         completed = subprocess.run(command, cwd=cwd, check=False)
-        return completed.returncode == 0
+        success = completed.returncode == 0
+        if success:
+            _logger.debug("Command succeeded: %s", " ".join(command))
+        else:
+            _logger.warning("Command failed (exit %d): %s", completed.returncode, " ".join(command))
+        return success
     except FileNotFoundError:
+        _logger.error("Command not found: %s", command[0])
         print(f"Command not found: {command[0]}")
         return False
 
 
 def run_command_no_cwd(command: Sequence[str]) -> bool:
+    _logger.debug("Running command: %s", " ".join(command))
     print(f"\n$ {' '.join(command)}")
     try:
         completed = subprocess.run(command, check=False)
-        return completed.returncode == 0
+        success = completed.returncode == 0
+        if success:
+            _logger.debug("Command succeeded: %s", " ".join(command))
+        else:
+            _logger.warning("Command failed (exit %d): %s", completed.returncode, " ".join(command))
+        return success
     except FileNotFoundError:
+        _logger.error("Command not found: %s", command[0])
         print(f"Command not found: {command[0]}")
         return False
 
@@ -168,31 +185,39 @@ def build_only(project_root: Path) -> None:
 
     The caller is responsible for supplying a valid project root path.
     """
+    _logger.info("Build started for %s", project_root)
     package_json = project_root / "package.json"
     if not package_json.exists():
+        _logger.error("Build failed: no package.json found in %s", project_root)
         print(f"\nNo package.json found in: {project_root}")
         print("Build flow stopped.")
         return
 
     missing_dependencies = not shutil.which("node") or not shutil.which("pnpm")
     if missing_dependencies:
+        _logger.debug("Build: missing Node.js or pnpm – will attempt auto-install")
         show_install_notice()
 
     if not ensure_node_installed():
+        _logger.error("Build failed: Node.js could not be prepared")
         print("\nBuild flow failed: Node.js is required but could not be prepared.")
         return
 
     if not ensure_pnpm_installed():
+        _logger.error("Build failed: pnpm could not be prepared")
         print("\nBuild flow failed: pnpm is required but could not be prepared.")
         return
 
     install_ok = run_command(["pnpm", "install"], cwd=project_root)
     if not install_ok:
+        _logger.error("Build failed: pnpm install did not complete successfully")
         print("\nBuild flow failed. `pnpm install` did not complete successfully.")
         return
 
     build_ok = run_command(["pnpm", "build"], cwd=project_root)
     if build_ok:
+        _logger.info("Build completed successfully for %s", project_root)
         print("\nBuild flow completed successfully.")
     else:
+        _logger.error("Build failed: pnpm build did not complete successfully for %s", project_root)
         print("\nBuild flow failed. Check command output above.")

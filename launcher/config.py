@@ -9,6 +9,7 @@ File format (TOML)::
     show_detailed_checks = false
     build_on_update = false
     build_on_uninstall = false
+    text_logs_enabled = true
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ class Config:
     show_detailed_checks: bool = False
     build_on_update: bool = False
     build_on_uninstall: bool = False
+    text_logs_enabled: bool = True
 
 
 def load_config() -> Config:
@@ -45,6 +47,7 @@ def load_config() -> Config:
         show_detailed_checks=bool(data.get("show_detailed_checks", False)),
         build_on_update=bool(data.get("build_on_update", False)),
         build_on_uninstall=bool(data.get("build_on_uninstall", False)),
+        text_logs_enabled=bool(data.get("text_logs_enabled", True)),
     )
 
 
@@ -56,6 +59,7 @@ def save_config(config: Config) -> None:
         f"show_detailed_checks = {str(config.show_detailed_checks).lower()}",
         f"build_on_update = {str(config.build_on_update).lower()}",
         f"build_on_uninstall = {str(config.build_on_uninstall).lower()}",
+        f"text_logs_enabled = {str(config.text_logs_enabled).lower()}",
     ]
     _CONFIG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
