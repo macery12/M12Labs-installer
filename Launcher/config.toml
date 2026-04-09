@@ -1,4 +1,0 @@
-install_path = ""
-show_detailed_checks = false
-build_on_update = true
-build_on_uninstall = true
