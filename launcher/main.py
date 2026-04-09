@@ -7,6 +7,8 @@ import os
 import platform
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from backup import BackupEntry, create_backup, default_backups_dir, list_backups, restore_backup
@@ -236,14 +238,36 @@ def _create_backup_flow(cfg: Config, backups_dir, logger) -> None:
         return
 
     logger.info("Backup creation started. Source: %s", install_path)
-    print("\nCreating backup archive…")
-    try:
-        archive_path = create_backup(install_path, backups_dir)
+    print("\nNote: For slower systems this may take a minute.")
+    print("Compressing backup archive…\n")
+
+    result: dict = {}
+
+    def _run() -> None:
+        try:
+            result["path"] = create_backup(install_path, backups_dir)
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    spinner = ["|", "/", "-", "\\"]
+    idx = 0
+    while thread.is_alive():
+        print(f"\r  {spinner[idx % len(spinner)]}  Working…", end="", flush=True)
+        idx += 1
+        time.sleep(0.15)
+    thread.join()
+    print("\r" + " " * 20 + "\r", end="", flush=True)  # clear spinner line
+
+    if "error" in result:
+        logger.error("Backup creation failed: %s", result["error"])
+        print(f"✗ Backup failed: {result['error']}")
+    else:
+        archive_path = result["path"]
         logger.info("Backup creation complete. Archive: %s", archive_path)
-        print(f"\n✓ Backup saved: {archive_path.name}")
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Backup creation failed: %s", exc)
-        print(f"\n✗ Backup failed: {exc}")
+        print(f"✓ Backup saved: {archive_path.name}")
     wait_for_enter()
 
 
