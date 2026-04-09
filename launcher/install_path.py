@@ -1,35 +1,45 @@
 """Install path management for the M12 Labs launcher.
 
 Prompts the user for the panel install location on first run and saves it for
-reuse on all subsequent runs.  The value is stored as plain text under the
-user's XDG-compatible config directory so no hardcoded paths are ever needed.
+reuse on all subsequent runs.  The value is stored in ``config.toml`` located
+in the same directory as this file (i.e. the ``launcher/`` folder), so the
+config travels with the launcher rather than being buried under ``~/.config``.
+
+File format (TOML)::
+
+    install_path = "/var/www/m12labs"
 """
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 EXAMPLE_PATH = "/var/www/m12labs"
 
-_CONFIG_DIR = Path.home() / ".config" / "m12labs"
-_CONFIG_FILE = _CONFIG_DIR / "install_path"
+# Config file lives next to this source file so it stays with the launcher.
+_CONFIG_FILE = Path(__file__).parent / "config.toml"
 
 
 def load_saved_install_path() -> Path | None:
     """Return the previously saved install path, or None if not set."""
     try:
-        text = _CONFIG_FILE.read_text(encoding="utf-8").strip()
-        if text:
-            return Path(text)
+        with _CONFIG_FILE.open("rb") as fh:
+            data = tomllib.load(fh)
+        value = data.get("install_path", "").strip()
+        if value:
+            return Path(value)
     except OSError:
         pass
     return None
 
 
 def save_install_path(path: Path) -> None:
-    """Persist the install path so future runs do not prompt again."""
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _CONFIG_FILE.write_text(str(path) + "\n", encoding="utf-8")
+    """Persist the install path to ``config.toml`` so future runs reuse it."""
+    _CONFIG_FILE.write_text(
+        f'install_path = "{path}"\n',
+        encoding="utf-8",
+    )
 
 
 def prompt_for_install_path() -> Path:
@@ -49,8 +59,9 @@ def prompt_for_install_path() -> Path:
 def get_install_path() -> Path:
     """Return the saved install path, prompting the user if not yet set.
 
-    On the first run the user is prompted once and the answer is saved.
-    Every subsequent run reloads the saved value without prompting.
+    On the first run the user is prompted once and the answer is saved to
+    ``launcher/config.toml``.  Every subsequent run reloads that value
+    without prompting.
     """
     saved = load_saved_install_path()
     if saved is not None:
