@@ -170,8 +170,8 @@ def build_only(project_root: Path | None = None) -> None:
     try:
         package_json_exists = package_json.exists()
     except OSError as error:
-        print(f"No package.json found in: {resolved_project_root}")
-        print(f"Path check error: {error}")
+        print(f"Failed to check package.json in: {resolved_project_root}")
+        print(f"Path access error: {error}")
         return
 
     if not package_json_exists:
