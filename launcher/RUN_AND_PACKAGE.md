@@ -17,10 +17,12 @@ The menu is interactive and includes placeholder management flows plus a starter
 ## Build-only behavior in current template
 Menu option `5. Build only` does:
 1. Verify Linux platform
-2. Verify `node` is installed (auto-installs if missing)
-3. Verify `pnpm` is installed (auto-installs if missing)
-4. Run `pnpm install`
-5. Run `pnpm build`
+2. Verify `package.json` exists at repository root (stop immediately if missing)
+3. Show dependency-install notice when toolchain install is needed (includes short pause)
+4. Verify `node` is installed (auto-installs if missing)
+5. Verify `pnpm` is installed (auto-installs if missing)
+6. Run `pnpm install`
+7. Run `pnpm build`
 
 It currently expects `package.json` at repository root.
 
