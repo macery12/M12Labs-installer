@@ -10,7 +10,13 @@ import sys
 from pathlib import Path
 
 from build import build_only as run_build_only
-from check import format_results, format_results_concise, has_failures, run_checks
+from check import (
+    format_results,
+    format_results_concise,
+    has_failures,
+    has_modified_files,
+    run_checks,
+)
 from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
 
 PLACEHOLDER_EXTENSION_COUNT = 12
@@ -148,10 +154,13 @@ def check_menu(cfg: Config) -> None:
     else:
         print(format_results_concise(results))
 
-    if has_failures(results):
+    if has_modified_files(results):
+        print("\n⚠  WARNING: The panel installation contains modified or missing files.")
+        print("   This installation does not appear to be stock/original.")
+    elif has_failures(results):
         print("\nSome checks failed. Review the paths above.")
     else:
-        print("\nAll checks passed.")
+        print("\nAll checks passed. Panel installation appears to be original.")
 
     wait_for_enter()
 
