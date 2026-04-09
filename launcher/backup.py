@@ -24,6 +24,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import tarfile
 import shutil
 from datetime import datetime
@@ -35,6 +36,8 @@ _DEFAULT_BACKUPS_DIR = Path(__file__).parent / "backups"
 
 _ARCHIVE_PREFIX = "backup-"
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
+
+_logger = logging.getLogger("m12labs")
 
 
 class BackupEntry(TypedDict):
@@ -79,6 +82,7 @@ def create_backup(install_path: Path, backups_dir: Path | None = None) -> Path:
         backups_dir = _DEFAULT_BACKUPS_DIR
 
     if not install_path.exists():
+        _logger.error("Backup failed: install path does not exist: %s", install_path)
         raise FileNotFoundError(f"Install path does not exist: {install_path}")
 
     backups_dir.mkdir(parents=True, exist_ok=True)
@@ -87,9 +91,12 @@ def create_backup(install_path: Path, backups_dir: Path | None = None) -> Path:
     archive_name = f"{_ARCHIVE_PREFIX}{timestamp}.tar.gz"
     archive_path = backups_dir / archive_name
 
+    _logger.info("Creating backup archive: %s (source: %s)", archive_path, install_path)
     with tarfile.open(archive_path, "w:gz") as tar:
         tar.add(install_path, arcname=install_path.name)
 
+    size = archive_path.stat().st_size
+    _logger.info("Backup archive created: %s (%s)", archive_path.name, _human_size(size))
     return archive_path
 
 
@@ -108,6 +115,7 @@ def list_backups(backups_dir: Path | None = None) -> list[BackupEntry]:
         backups_dir = _DEFAULT_BACKUPS_DIR
 
     if not backups_dir.exists():
+        _logger.debug("Backups directory does not exist: %s", backups_dir)
         return []
 
     entries: list[BackupEntry] = []
@@ -135,6 +143,7 @@ def list_backups(backups_dir: Path | None = None) -> list[BackupEntry]:
             )
         )
 
+    _logger.debug("Found %d backup(s) in %s", len(entries), backups_dir)
     return entries
 
 
@@ -156,10 +165,16 @@ def restore_backup(archive_path: Path, install_path: Path) -> None:
         OSError:           If the filesystem operations fail.
     """
     if not archive_path.exists():
+        _logger.error("Restore failed: archive not found: %s", archive_path)
         raise FileNotFoundError(f"Backup archive not found: {archive_path}")
+
+    _logger.info(
+        "Restore started: archive=%s target=%s", archive_path.name, install_path
+    )
 
     # Clear current install directory contents.
     if install_path.exists():
+        _logger.debug("Removing existing install directory: %s", install_path)
         shutil.rmtree(install_path)
     install_path.mkdir(parents=True, exist_ok=True)
 
@@ -175,6 +190,8 @@ def restore_backup(archive_path: Path, install_path: Path) -> None:
             tar.extractall(path=install_path.parent, filter="data")
         except TypeError:
             tar.extractall(path=install_path.parent)  # noqa: S202
+
+    _logger.info("Restore complete: archive=%s target=%s", archive_path.name, install_path)
 
 
 def _validate_tar_members(tar: tarfile.TarFile, expected_root: str) -> None:
