@@ -1,18 +1,74 @@
 """Read-only panel installation validator for the M12 Labs launcher.
 
-This module only reads the filesystem.  It never installs packages, modifies
-project files, or makes any persistent changes.  Every public function is
-safe to call at any time without side effects.
+Validates installed panel files against a SHA-256 hash manifest.  The
+manifest is resolved in priority order:
+
+  1. Remote release manifest for the version declared in ``config/app.php``
+     (https://github.com/macery12/M12Labs/releases/download/v{ver}/manifest.json)
+  2. Local ``<panel_root>/manifest.json`` as a fallback
+
+This module only reads the filesystem and the network.  It never installs
+packages, modifies project files, or makes any persistent changes.  Every
+public function is safe to call at any time without side effects.
 """
 
 from __future__ import annotations
 
-import os
+import hashlib
+import json
+import re
+import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+RELEASE_MANIFEST_URL = (
+    "https://github.com/macery12/M12Labs/releases/download/v{version}/manifest.json"
+)
+MANIFEST_TIMEOUT = 10  # seconds
+
+# Strict semver-like pattern accepted for release manifest URL construction.
+# Only versions matching X.Y.Z (all numeric) are allowed to prevent SSRF.
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+# Directories/files scanned when looking for extra (untracked) files.
+# Add new entries here to widen the scope of the extra-file search.
+TRACKED_PATHS: list[str] = [
+    "package.json",
+    "composer.json",
+    "artisan",
+    "resources/scripts",
+    "app",
+    "config",
+    "routes",
+    "database",
+]
+
+
+# ---------------------------------------------------------------------------
+# Result types
+# ---------------------------------------------------------------------------
+
+class FileStatus(Enum):
+    ORIGINAL = "ORIGINAL"  # hash matches manifest
+    MODIFIED = "MODIFIED"  # hash differs from manifest
+    MISSING  = "MISSING"   # listed in manifest but absent from disk
+    EXTRA    = "EXTRA"     # present on disk but not listed in manifest
+
+
+@dataclass
+class FileResult:
+    status: FileStatus
+    path: str
+
+
+# Legacy types kept so that main.py's import surface does not change.
 class Status(Enum):
     PASS = "PASS"
     WARN = "WARN"
@@ -26,57 +82,163 @@ class CheckResult:
     message: str
 
 
-# Each entry: (display label, path relative to install root, "file"|"dir", check_writable)
-# Add new items here to extend the validator without changing any other function.
-REQUIRED_ITEMS: list[tuple[str, str, str, bool]] = [
-    ("package.json",       "package.json",       "file", False),
-    ("composer.json",      "composer.json",       "file", False),
-    ("artisan",            "artisan",             "file", False),
-    ("resources/scripts/", "resources/scripts",   "dir",  False),
-    ("app/",               "app",                 "dir",  False),
-    ("config/",            "config",              "dir",  False),
-    ("routes/",            "routes",              "dir",  False),
-    ("database/",          "database",            "dir",  False),
-]
+# ---------------------------------------------------------------------------
+# Manifest helpers
+# ---------------------------------------------------------------------------
+
+def get_panel_version(install_root: Path) -> str | None:
+    """Read the panel version string from ``config/app.php``.
+
+    Returns ``None`` when the file is missing or the version key is absent.
+    """
+    app_php = install_root / "config" / "app.php"
+    try:
+        content = app_php.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"""['"]version['"]\s*=>\s*['"]([^'"]+)['"]""", content)
+    return match.group(1).strip() if match else None
 
 
-def _check_item(
-    root: Path,
-    label: str,
-    relative_path: str,
-    expected_type: str,
-    check_writable: bool,
-) -> CheckResult:
-    """Validate a single file or directory entry under the install root."""
-    target = root / relative_path
+def _fetch_remote_manifest(version: str) -> dict | None:
+    """Download the release manifest for *version* from GitHub.
 
-    if not target.exists():
-        return CheckResult(Status.FAIL, label, f"Not found: {target}")
+    *version* must already be validated as a strict X.Y.Z string.
+    Returns the parsed JSON dict, or ``None`` on any error.
+    """
+    url = RELEASE_MANIFEST_URL.format(version=version)
+    try:
+        with urllib.request.urlopen(url, timeout=MANIFEST_TIMEOUT) as resp:  # noqa: S310
+            if resp.status == 200:
+                return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        pass
+    return None
 
-    if expected_type == "file" and not target.is_file():
-        return CheckResult(Status.FAIL, label, f"Expected a file: {target}")
 
-    if expected_type == "dir" and not target.is_dir():
-        return CheckResult(Status.FAIL, label, f"Expected a directory: {target}")
+def _load_local_manifest(install_root: Path) -> dict | None:
+    """Load ``manifest.json`` from the panel root directory.
 
-    if not os.access(target, os.R_OK):
-        return CheckResult(Status.FAIL, label, f"Not readable: {target}")
+    Returns the parsed JSON dict, or ``None`` when absent or malformed.
+    """
+    manifest_path = install_root / "manifest.json"
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
-    if check_writable and not os.access(target, os.W_OK):
-        return CheckResult(Status.WARN, label, f"Not writable: {target}")
 
-    return CheckResult(Status.PASS, label, f"OK: {target}")
+def load_manifest(install_root: Path) -> tuple[dict | None, str]:
+    """Resolve the hash manifest, trying the remote release URL first.
 
+    Returns ``(manifest_dict, source_description)``.  When no manifest can be
+    found, ``manifest_dict`` is ``None``.
+    """
+    version = get_panel_version(install_root)
+    if version and _VERSION_RE.match(version):
+        remote = _fetch_remote_manifest(version)
+        if remote is not None:
+            url = RELEASE_MANIFEST_URL.format(version=version)
+            return remote, f"release manifest v{version} ({url})"
+
+    local = _load_local_manifest(install_root)
+    if local is not None:
+        return local, f"local manifest ({install_root / 'manifest.json'})"
+
+    return None, "no manifest available"
+
+
+def _extract_files(manifest: dict) -> dict[str, str]:
+    """Return a ``{relative_path: sha256_hex}`` mapping from a manifest dict.
+
+    Supports both a flat ``{"path": "hash"}`` format and a nested
+    ``{"files": {"path": "hash"}}`` format.  All hashes are normalized to
+    lowercase for consistent comparison.
+    """
+    if "files" in manifest and isinstance(manifest["files"], dict):
+        source = manifest["files"]
+    else:
+        source = manifest
+    return {k: v.lower() for k, v in source.items() if isinstance(v, str)}
+
+
+# ---------------------------------------------------------------------------
+# Hashing helpers
+# ---------------------------------------------------------------------------
+
+def _sha256_file(path: Path) -> str:
+    """Return the lowercase hex SHA-256 digest of a file."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Hash-based file checks
+# ---------------------------------------------------------------------------
+
+def run_hash_checks(install_root: Path, manifest_files: dict[str, str]) -> list[FileResult]:
+    """Compare installed files against the SHA-256 hashes in *manifest_files*.
+
+    Returns one :class:`FileResult` per path in the manifest (ORIGINAL /
+    MODIFIED / MISSING), plus one EXTRA result for every file found under
+    :data:`TRACKED_PATHS` that is not listed in the manifest.
+
+    This function is strictly read-only.
+    """
+    results: list[FileResult] = []
+
+    # --- Check every path listed in the manifest ---
+    for rel_path, expected_hash in sorted(manifest_files.items()):
+        target = install_root / rel_path
+        if not target.exists():
+            results.append(FileResult(FileStatus.MISSING, rel_path))
+            continue
+        if not target.is_file():
+            # Directories are not individually hashed; skip silently.
+            continue
+        try:
+            actual = _sha256_file(target)
+        except OSError:
+            results.append(FileResult(FileStatus.MISSING, rel_path))
+            continue
+        if actual == expected_hash:
+            results.append(FileResult(FileStatus.ORIGINAL, rel_path))
+        else:
+            results.append(FileResult(FileStatus.MODIFIED, rel_path))
+
+    # --- Detect extra files in tracked paths ---
+    for tracked in TRACKED_PATHS:
+        target = install_root / tracked
+        if not target.exists():
+            continue
+        candidate_files: list[Path] = (
+            [target] if target.is_file()
+            else sorted(p for p in target.rglob("*") if p.is_file())
+        )
+        for file_path in candidate_files:
+            rel = str(file_path.relative_to(install_root))
+            if rel not in manifest_files:
+                results.append(FileResult(FileStatus.EXTRA, rel))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Public interface consumed by main.py
+# ---------------------------------------------------------------------------
 
 def run_checks(install_root: Path) -> list[CheckResult]:
-    """Run all validation checks against the given install root.
+    """Run all validation checks against *install_root*.
+
+    Loads the appropriate manifest and compares every listed file's SHA-256
+    hash against what is present on disk.  Falls back to existence-only checks
+    when no manifest is available.
 
     This function is strictly read-only.  It performs no installs, builds,
     deletions, or writes to the project tree.
-
-    Returns a list of CheckResult objects, one per checked item.  When the
-    install root itself cannot be accessed, a single FAIL result is returned
-    immediately and no further checks are attempted.
     """
     results: list[CheckResult] = []
 
@@ -92,8 +254,35 @@ def run_checks(install_root: Path) -> list[CheckResult]:
         )
         return results
 
-    for label, rel_path, expected_type, check_writable in REQUIRED_ITEMS:
-        results.append(_check_item(install_root, label, rel_path, expected_type, check_writable))
+    # Try to load a hash manifest.
+    manifest, source = load_manifest(install_root)
+
+    if manifest is None:
+        results.append(
+            CheckResult(Status.WARN, "Manifest", f"Could not load manifest – {source}")
+        )
+        # Fallback: existence-only checks for the important paths.
+        for tracked in TRACKED_PATHS:
+            target = install_root / tracked
+            if not target.exists():
+                results.append(CheckResult(Status.FAIL, tracked, f"Not found: {target}"))
+            else:
+                results.append(CheckResult(Status.PASS, tracked, f"Present: {target}"))
+        return results
+
+    results.append(CheckResult(Status.PASS, "Manifest", f"Loaded from {source}"))
+
+    # Hash-based validation.
+    manifest_files = _extract_files(manifest)
+    for fr in run_hash_checks(install_root, manifest_files):
+        if fr.status == FileStatus.ORIGINAL:
+            results.append(CheckResult(Status.PASS, fr.path, "original"))
+        elif fr.status == FileStatus.MODIFIED:
+            results.append(CheckResult(Status.FAIL, fr.path, "MODIFIED – hash mismatch"))
+        elif fr.status == FileStatus.MISSING:
+            results.append(CheckResult(Status.FAIL, fr.path, "MISSING – not found on disk"))
+        elif fr.status == FileStatus.EXTRA:
+            results.append(CheckResult(Status.WARN, fr.path, "extra / untracked file"))
 
     return results
 
@@ -122,3 +311,12 @@ def format_results_concise(results: list[CheckResult]) -> str:
 def has_failures(results: list[CheckResult]) -> bool:
     """Return True if any check resulted in FAIL status."""
     return any(r.status == Status.FAIL for r in results)
+
+
+def has_modified_files(results: list[CheckResult]) -> bool:
+    """Return True if any file was detected as MODIFIED or MISSING."""
+    return any(
+        r.status == Status.FAIL
+        and (r.message.startswith("MODIFIED") or r.message.startswith("MISSING"))
+        for r in results
+    )
