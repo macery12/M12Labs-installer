@@ -7,8 +7,11 @@ import os
 import platform
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
+from backup import BackupEntry, create_backup, default_backups_dir, list_backups, restore_backup
 from build import build_only as run_build_only
 from check import (
     format_results,
@@ -198,6 +201,147 @@ def build_only_menu(install_root: Path) -> None:
     wait_for_enter()
 
 
+def backup_menu(cfg: Config) -> None:
+    logger = get_logger()
+    backups_dir = default_backups_dir()
+
+    while True:
+        clear_screen()
+        print("Backups\n")
+        print("1. Create backup")
+        print("2. Restore backup")
+        print("3. Back")
+
+        choice = input("\nSelect an option: ").strip()
+        if choice == "1":
+            _create_backup_flow(cfg, backups_dir, logger)
+        elif choice == "2":
+            _restore_backup_flow(cfg, backups_dir, logger)
+        elif choice == "3":
+            return
+        else:
+            print("\nInvalid option.")
+            wait_for_enter()
+
+
+def _create_backup_flow(cfg: Config, backups_dir, logger) -> None:
+    clear_screen()
+    print("Create backup\n")
+    install_path = cfg.install_path
+    print(f"Source:  {install_path}")
+    print(f"Dest:    {backups_dir}/")
+
+    confirm = input("\nCreate a full backup now? [y/N]: ").strip().lower()
+    if confirm != "y":
+        print("Backup cancelled.")
+        wait_for_enter()
+        return
+
+    logger.info("Backup creation started. Source: %s", install_path)
+    print("\nNote: For slower systems this may take a minute.")
+    print("Compressing backup archive…\n")
+
+    result: dict = {}
+
+    def _run() -> None:
+        try:
+            result["path"] = create_backup(install_path, backups_dir)
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    spinner = ["|", "/", "-", "\\"]
+    idx = 0
+    while thread.is_alive():
+        print(f"\r  {spinner[idx % len(spinner)]}  Working…", end="", flush=True)
+        idx += 1
+        time.sleep(0.15)
+    thread.join()
+    print("\r" + " " * 20 + "\r", end="", flush=True)  # clear spinner line
+
+    if "error" in result:
+        logger.error("Backup creation failed: %s", result["error"])
+        print(f"✗ Backup failed: {result['error']}")
+    else:
+        archive_path = result["path"]
+        logger.info("Backup creation complete. Archive: %s", archive_path)
+        print(f"✓ Backup saved: {archive_path.name}")
+    wait_for_enter()
+
+
+def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
+    clear_screen()
+    print("Restore backup\n")
+
+    backups = list_backups(backups_dir)
+    if not backups:
+        print("No backups found.")
+        wait_for_enter()
+        return
+
+    for idx, entry in enumerate(backups, start=1):
+        print(f"{idx}. {entry['filename']}  |  {entry['timestamp']}  |  {entry['size_human']}")
+    print("0. Back")
+
+    raw = input("\nSelect a backup to restore: ").strip()
+    if raw == "0":
+        return
+    if not raw.isdigit() or not (1 <= int(raw) <= len(backups)):
+        print("\nInvalid selection.")
+        wait_for_enter()
+        return
+
+    selected: BackupEntry = backups[int(raw) - 1]
+    logger.info("Restore: user selected backup '%s'", selected["filename"])
+
+    install_path = cfg.install_path
+    print(f"\nSelected:  {selected['filename']}")
+    print(f"Timestamp: {selected['timestamp']}")
+    print(f"Size:      {selected['size_human']}")
+    print(f"\nThis will REPLACE the contents of:\n  {install_path}")
+    confirm = input("\nRestore this backup? [y/N]: ").strip().lower()
+    if confirm != "y":
+        logger.info("Restore cancelled by user.")
+        print("Restore cancelled.")
+        wait_for_enter()
+        return
+
+    logger.info("Restore started. Archive: %s  Target: %s", selected["filename"], install_path)
+    print("\nNote: For slower systems this may take a minute.")
+    print("Restoring backup…\n")
+
+    result: dict = {}
+
+    def _run_restore() -> None:
+        try:
+            restore_backup(selected["path"], install_path)
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    thread = threading.Thread(target=_run_restore, daemon=True)
+    thread.start()
+
+    spinner = ["|", "/", "-", "\\"]
+    idx = 0
+    while thread.is_alive():
+        print(f"\r  {spinner[idx % len(spinner)]}  Working…", end="", flush=True)
+        idx += 1
+        time.sleep(0.15)
+    thread.join()
+    print("\r" + " " * 20 + "\r", end="", flush=True)  # clear spinner line
+
+    if "error" in result:
+        logger.error("Restore failed: %s", result["error"])
+        print(f"✗ Restore failed: {result['error']}")
+    else:
+        logger.info("Restore complete. Archive: %s", selected["filename"])
+        print("✓ Restore complete.")
+        print("  Restart the launcher to pick up any configuration changes from the restored backup.")
+    wait_for_enter()
+
+
 def config_menu(cfg: Config) -> Config:
     logger = get_logger()
     while True:
@@ -266,7 +410,8 @@ def main() -> int:
         print("3. Update")
         print("4. Check")
         print("5. Build only")
-        print("6. Config")
+        print("6. Backups")
+        print("7. Config")
         print("0. Exit")
 
         choice = input("\nSelect an option: ").strip()
@@ -286,6 +431,9 @@ def main() -> int:
             logger.info("Menu: Build only")
             build_only_menu(cfg.install_path)
         elif choice == "6":
+            logger.info("Menu: Backups")
+            backup_menu(cfg)
+        elif choice == "7":
             logger.debug("Menu: Config")
             cfg = config_menu(cfg)
         elif choice == "0":
