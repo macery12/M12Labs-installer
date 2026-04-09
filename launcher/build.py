@@ -50,7 +50,7 @@ def get_package_manager() -> str | None:
 
 def with_privilege(command: Sequence[str]) -> list[str] | None:
     try:
-        is_root = os.getuid() == 0
+        is_root = os.geteuid() == 0
     except AttributeError:
         is_root = False
 

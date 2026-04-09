@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SUGGESTED_DEFAULT = "/var/www/m12labs"
+EXAMPLE_PATH = "/var/www/m12labs"
 
 _CONFIG_DIR = Path.home() / ".config" / "m12labs"
 _CONFIG_FILE = _CONFIG_DIR / "install_path"
@@ -35,7 +35,7 @@ def save_install_path(path: Path) -> None:
 def prompt_for_install_path() -> Path:
     """Prompt the user to enter the panel install location and save it."""
     print("\nPanel install location has not been configured yet.")
-    print(f"  Example: {SUGGESTED_DEFAULT}")
+    print(f"  Example: {EXAMPLE_PATH}")
     while True:
         raw = input("Enter panel install path: ").strip()
         if raw:
