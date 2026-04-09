@@ -19,7 +19,8 @@ This launcher targets the M12 Labs panel project layout:
 | `main.py` | Menu shell and user interaction only |
 | `check.py` | Read-only validation against the install location |
 | `build.py` | Build flow helpers (`pnpm install` + `pnpm build`) |
-| `install_path.py` | Prompt-once, save-and-reload install path management |
+| `config.py` | Config read/write (TOML), install path prompt, `Config` dataclass |
+| `install_path.py` | Legacy install-path helper (superseded by `config.py`) |
 
 ## Install path behavior
 - On the very first run the user is prompted for the panel install path.
@@ -35,6 +36,7 @@ This launcher targets the M12 Labs panel project layout:
 3. Update
 4. Check
 5. Build only
+6. Config
 0. Exit
 ```
 
@@ -42,8 +44,9 @@ Current phase behavior:
 - **Install** – paged placeholder catalog with page navigation
 - **Uninstall** – installed-extension submenu placeholder
 - **Update** – update-selection and confirmation placeholder
-- **Check** – real read-only validation via `check.py`
+- **Check** – real read-only validation via `check.py`; concise or detailed output controlled by `show_detailed_checks` config flag
 - **Build only** – `package.json` precheck → tool install if needed → `pnpm install` → `pnpm build`
+- **Config** – options 2 (change install path), 3 (toggle detailed checks), 5 (build on update), 6 (build on uninstall)
 
 ## check.py design
 The `Check` command is strictly read-only.  It only inspects the filesystem
