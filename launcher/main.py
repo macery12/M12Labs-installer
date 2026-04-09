@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 from build import build_only as run_build_only
-from check import format_results, has_failures, run_checks
-from install_path import get_install_path
+from check import format_results, format_results_concise, has_failures, run_checks
+from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
 
 PLACEHOLDER_EXTENSION_COUNT = 12
 EXTENSION_CATALOG = [
@@ -135,13 +135,18 @@ def update_menu(installed_extensions: list[str]) -> None:
         wait_for_enter()
 
 
-def check_menu(install_root: Path) -> None:
+def check_menu(cfg: Config) -> None:
+    install_root = cfg.install_path
     clear_screen()
     print("Check / validation mode\n")
     print(f"Panel install path: {install_root}\n")
 
     results = run_checks(install_root)
-    print(format_results(results))
+
+    if cfg.show_detailed_checks:
+        print(format_results(results))
+    else:
+        print(format_results_concise(results))
 
     if has_failures(results):
         print("\nSome checks failed. Review the paths above.")
@@ -163,22 +168,60 @@ def build_only_menu(install_root: Path) -> None:
     wait_for_enter()
 
 
+def config_menu(cfg: Config) -> Config:
+    while True:
+        clear_screen()
+        print("Config\n")
+        print(f"2. Change install path          [{cfg.install_path}]")
+        print(f"3. Show detailed checks         [{'on' if cfg.show_detailed_checks else 'off'}]")
+        print(f"5. Build on update              [{'on' if cfg.build_on_update else 'off'}]")
+        print(f"6. Build on uninstall           [{'on' if cfg.build_on_uninstall else 'off'}]")
+        print("0. Back")
+
+        choice = input("\nSelect an option: ").strip()
+        if choice == "2":
+            cfg = prompt_for_install_path(cfg)
+            wait_for_enter()
+        elif choice == "3":
+            cfg.show_detailed_checks = not cfg.show_detailed_checks
+            save_config(cfg)
+            print(f"\nShow detailed checks: {'on' if cfg.show_detailed_checks else 'off'}")
+            wait_for_enter()
+        elif choice == "5":
+            cfg.build_on_update = not cfg.build_on_update
+            save_config(cfg)
+            print(f"\nBuild on update: {'on' if cfg.build_on_update else 'off'}")
+            wait_for_enter()
+        elif choice == "6":
+            cfg.build_on_uninstall = not cfg.build_on_uninstall
+            save_config(cfg)
+            print(f"\nBuild on uninstall: {'on' if cfg.build_on_uninstall else 'off'}")
+            wait_for_enter()
+        elif choice == "0":
+            return cfg
+        else:
+            print("\nInvalid option.")
+            wait_for_enter()
+
+
 def main() -> int:
     if not ensure_linux():
         return 1
 
-    install_root = get_install_path()
+    cfg = load_config()
+    cfg = ensure_install_path(cfg)
     installed_extensions: list[str] = []
 
     while True:
         clear_screen()
         print("M12 Labs Linux Extension Manager\n")
-        print(f"Panel path: {install_root}\n")
+        print(f"Panel path: {cfg.install_path}\n")
         print("1. Install")
         print("2. Uninstall")
         print("3. Update")
         print("4. Check")
         print("5. Build only")
+        print("6. Config")
         print("0. Exit")
 
         choice = input("\nSelect an option: ").strip()
@@ -189,9 +232,11 @@ def main() -> int:
         elif choice == "3":
             update_menu(installed_extensions)
         elif choice == "4":
-            check_menu(install_root)
+            check_menu(cfg)
         elif choice == "5":
-            build_only_menu(install_root)
+            build_only_menu(cfg.install_path)
+        elif choice == "6":
+            cfg = config_menu(cfg)
         elif choice == "0":
             print("Goodbye.")
             return 0

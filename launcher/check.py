@@ -105,6 +105,20 @@ def format_results(results: list[CheckResult]) -> str:
     return "\n".join(lines)
 
 
+def format_results_concise(results: list[CheckResult]) -> str:
+    """Return a compact one-line summary (pass/warn/fail counts)."""
+    total = len(results)
+    passed = sum(1 for r in results if r.status == Status.PASS)
+    warned = sum(1 for r in results if r.status == Status.WARN)
+    failed = sum(1 for r in results if r.status == Status.FAIL)
+    parts = [f"{passed}/{total} checks passed"]
+    if warned:
+        parts.append(f"{warned} warning(s)")
+    if failed:
+        parts.append(f"{failed} failure(s)")
+    return "  " + ", ".join(parts)
+
+
 def has_failures(results: list[CheckResult]) -> bool:
     """Return True if any check resulted in FAIL status."""
     return any(r.status == Status.FAIL for r in results)
