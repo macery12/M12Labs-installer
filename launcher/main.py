@@ -144,14 +144,29 @@ def check_menu() -> None:
     wait_for_enter()
 
 
+def find_project_root(start: Path) -> Path | None:
+    for parent in [start] + list(start.parents):
+        if (parent / "package.json").exists():
+            return parent
+    return None
+
+
 def build_only() -> None:
     clear_screen()
     print("Build only\n")
+
     if not ensure_linux():
         wait_for_enter()
         return
 
-    project_root = Path(__file__).resolve().parent.parent
+    start_path = Path(__file__).resolve()
+    project_root = find_project_root(start_path)
+
+    if not project_root:
+        print("Could not find package.json")
+        wait_for_enter()
+        return
+
     run_build_only(project_root)
     wait_for_enter()
 
