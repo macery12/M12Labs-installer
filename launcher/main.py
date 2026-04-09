@@ -302,7 +302,7 @@ def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
     print(f"Size:      {selected['size_human']}")
     print()
     print("⚠  WARNING: This operation cannot be undone.")
-    print(f"   ALL current contents of the following directory will be DELETED")
+    print(f"   ALL current contents of the following directory will be deleted")
     print(f"   and replaced with the contents of the selected backup:")
     print(f"     {install_path}")
     print()
@@ -413,11 +413,11 @@ def _print_startup_summary(cfg: Config) -> None:
             manifest_note = "no local manifest (will try remote on check)"
 
     print("─" * 44)
-    print(f"  Install path   : {cfg.install_path}")
-    print(f"  Text logging   : {'enabled' if cfg.text_logs_enabled else 'disabled'}")
-    print(f"  Detailed checks: {'on' if cfg.show_detailed_checks else 'off'}")
-    print(f"  Backups        : {backup_count} available")
-    print(f"  Manifest       : {manifest_note}")
+    print(f"  {'Install path':<15}: {cfg.install_path}")
+    print(f"  {'Text logging':<15}: {'enabled' if cfg.text_logs_enabled else 'disabled'}")
+    print(f"  {'Detailed checks':<15}: {'on' if cfg.show_detailed_checks else 'off'}")
+    print(f"  {'Backups':<15}: {backup_count} available")
+    print(f"  {'Manifest':<15}: {manifest_note}")
     print("─" * 44)
     print()
 
