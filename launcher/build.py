@@ -165,7 +165,8 @@ def build_only(project_root: Path | None = None) -> None:
     if project_root:
         resolved_project_root = project_root
     else:
-        resolved_project_root = Path(os.getenv(PROJECT_ROOT_ENV, str(DEFAULT_PROJECT_ROOT)))
+        env_project_root = os.getenv(PROJECT_ROOT_ENV)
+        resolved_project_root = Path(env_project_root) if env_project_root else DEFAULT_PROJECT_ROOT
     package_json = resolved_project_root / "package.json"
     try:
         package_json_exists = package_json.exists()
