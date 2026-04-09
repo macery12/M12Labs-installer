@@ -24,7 +24,7 @@ This launcher targets the M12 Labs panel project layout:
 ## Install path behavior
 - On the very first run the user is prompted for the panel install path.
 - The suggested example path is `/var/www/m12labs`.
-- The answer is saved to `~/.config/m12labs/install_path`.
+- The answer is saved to `launcher/config.toml` (TOML format, co-located with the launcher files).
 - Every subsequent run reloads the saved value without prompting again.
 - No hardcoded fallback paths are used anywhere.
 

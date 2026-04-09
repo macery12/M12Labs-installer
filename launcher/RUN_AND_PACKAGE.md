@@ -17,7 +17,7 @@ panel install path (example: `/var/www/m12labs`) and save it for all future
 runs.
 
 ## Install path management
-- Saved to `~/.config/m12labs/install_path` as plain text.
+- Saved to `launcher/config.toml` (TOML format, co-located with the launcher files).
 - Prompted once on first run; reused silently on every subsequent run.
 - No hardcoded fallback paths are used.
 
