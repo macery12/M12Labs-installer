@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+INSTALL_NOTICE_DELAY_SECONDS = 2
+
 
 def run_command(command: Sequence[str], cwd: Path) -> bool:
     print(f"\n$ {' '.join(command)}")
@@ -154,7 +156,7 @@ def show_install_notice() -> None:
     print("\nPreparing required build dependencies.")
     print("This may take 1–2 minutes.")
     print("Please wait while installation completes...")
-    time.sleep(2)
+    time.sleep(INSTALL_NOTICE_DELAY_SECONDS)
 
 
 def build_only(project_root: Path) -> None:
