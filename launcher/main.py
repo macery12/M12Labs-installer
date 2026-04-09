@@ -18,6 +18,7 @@ from check import (
     run_checks,
 )
 from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
+from log import get_logger, setup_logging
 
 PLACEHOLDER_EXTENSION_COUNT = 12
 EXTENSION_CATALOG = [
@@ -51,6 +52,7 @@ def calculate_total_pages(item_count: int, page_size: int) -> int:
 
 
 def install_menu() -> None:
+    logger = get_logger()
     page = 0
     while True:
         clear_screen()
@@ -72,6 +74,7 @@ def install_menu() -> None:
         if choice.isdigit() and 1 <= int(choice) <= len(page_items):
             parsed_choice = int(choice)
             selected = page_items[parsed_choice - 1]
+            logger.info("Install action: selected extension '%s'", selected)
             print(f"\nInstall placeholder for: {selected}")
             print("Real install logic will be added in a future phase.")
             wait_for_enter()
@@ -85,6 +88,7 @@ def install_menu() -> None:
 
 
 def uninstall_menu(installed_extensions: list[str]) -> None:
+    logger = get_logger()
     while True:
         clear_screen()
         print("Uninstall extensions (template)\n")
@@ -104,6 +108,7 @@ def uninstall_menu(installed_extensions: list[str]) -> None:
             and 1 <= (parsed_choice := int(choice)) <= len(installed_extensions)
         ):
             selected = installed_extensions[parsed_choice - 1]
+            logger.info("Uninstall action: selected extension '%s'", selected)
             print(f"\nUninstall placeholder for: {selected}")
             print("Real uninstall logic will be added in a future phase.")
         else:
@@ -112,6 +117,7 @@ def uninstall_menu(installed_extensions: list[str]) -> None:
 
 
 def update_menu(installed_extensions: list[str]) -> None:
+    logger = get_logger()
     while True:
         clear_screen()
         print("Update extensions (template)\n")
@@ -127,6 +133,7 @@ def update_menu(installed_extensions: list[str]) -> None:
         if choice == "b":
             return
         if choice == "a" and installed_extensions:
+            logger.info("Update action: update all extensions (%d tracked)", len(installed_extensions))
             print("\nUpdate-all placeholder.")
             print("Real update logic will be added in a future phase.")
         elif (
@@ -134,6 +141,7 @@ def update_menu(installed_extensions: list[str]) -> None:
             and 1 <= (parsed_choice := int(choice)) <= len(installed_extensions)
         ):
             selected = installed_extensions[parsed_choice - 1]
+            logger.info("Update action: selected extension '%s'", selected)
             print(f"\nUpdate placeholder for: {selected}")
             print("Real update logic will be added in a future phase.")
         else:
@@ -142,10 +150,13 @@ def update_menu(installed_extensions: list[str]) -> None:
 
 
 def check_menu(cfg: Config) -> None:
+    logger = get_logger()
     install_root = cfg.install_path
     clear_screen()
     print("Check / validation mode\n")
     print(f"Panel install path: {install_root}\n")
+
+    logger.info("Check started for: %s", install_root)
 
     results = run_checks(install_root)
 
@@ -153,6 +164,14 @@ def check_menu(cfg: Config) -> None:
         print(format_results(results))
     else:
         print(format_results_concise(results))
+
+    passed = sum(1 for r in results if r.status.value == "PASS")
+    warned = sum(1 for r in results if r.status.value == "WARN")
+    failed = sum(1 for r in results if r.status.value == "FAIL")
+    logger.info(
+        "Check complete for %s: %d passed, %d warning(s), %d failure(s)",
+        install_root, passed, warned, failed,
+    )
 
     if has_modified_files(results):
         print("\n⚠  WARNING: The panel installation contains modified or missing files.")
@@ -166,6 +185,7 @@ def check_menu(cfg: Config) -> None:
 
 
 def build_only_menu(install_root: Path) -> None:
+    logger = get_logger()
     clear_screen()
     print("Build only\n")
 
@@ -173,16 +193,19 @@ def build_only_menu(install_root: Path) -> None:
         wait_for_enter()
         return
 
+    logger.info("Build only started for: %s", install_root)
     run_build_only(install_root)
     wait_for_enter()
 
 
 def config_menu(cfg: Config) -> Config:
+    logger = get_logger()
     while True:
         clear_screen()
         print("Config\n")
         print(f"2. Change install path          [{cfg.install_path}]")
         print(f"3. Show detailed checks         [{'on' if cfg.show_detailed_checks else 'off'}]")
+        print(f"4. Text log files               [{'on' if cfg.text_logs_enabled else 'off'}]")
         print(f"5. Build on update              [{'on' if cfg.build_on_update else 'off'}]")
         print(f"6. Build on uninstall           [{'on' if cfg.build_on_uninstall else 'off'}]")
         print("0. Back")
@@ -190,20 +213,30 @@ def config_menu(cfg: Config) -> Config:
         choice = input("\nSelect an option: ").strip()
         if choice == "2":
             cfg = prompt_for_install_path(cfg)
+            logger.info("Config changed: install_path = %s", cfg.install_path)
             wait_for_enter()
         elif choice == "3":
             cfg.show_detailed_checks = not cfg.show_detailed_checks
             save_config(cfg)
+            logger.info("Config changed: show_detailed_checks = %s", cfg.show_detailed_checks)
             print(f"\nShow detailed checks: {'on' if cfg.show_detailed_checks else 'off'}")
+            wait_for_enter()
+        elif choice == "4":
+            cfg.text_logs_enabled = not cfg.text_logs_enabled
+            save_config(cfg)
+            logger.info("Config changed: text_logs_enabled = %s", cfg.text_logs_enabled)
+            print(f"\nText log files: {'on' if cfg.text_logs_enabled else 'off'}")
             wait_for_enter()
         elif choice == "5":
             cfg.build_on_update = not cfg.build_on_update
             save_config(cfg)
+            logger.info("Config changed: build_on_update = %s", cfg.build_on_update)
             print(f"\nBuild on update: {'on' if cfg.build_on_update else 'off'}")
             wait_for_enter()
         elif choice == "6":
             cfg.build_on_uninstall = not cfg.build_on_uninstall
             save_config(cfg)
+            logger.info("Config changed: build_on_uninstall = %s", cfg.build_on_uninstall)
             print(f"\nBuild on uninstall: {'on' if cfg.build_on_uninstall else 'off'}")
             wait_for_enter()
         elif choice == "0":
@@ -219,6 +252,9 @@ def main() -> int:
 
     cfg = load_config()
     cfg = ensure_install_path(cfg)
+    setup_logging(cfg.install_path, cfg.text_logs_enabled)
+    logger = get_logger()
+    logger.info("Launcher started. Panel path: %s", cfg.install_path)
     installed_extensions: list[str] = []
 
     while True:
@@ -235,18 +271,25 @@ def main() -> int:
 
         choice = input("\nSelect an option: ").strip()
         if choice == "1":
+            logger.info("Menu: Install")
             install_menu()
         elif choice == "2":
+            logger.info("Menu: Uninstall")
             uninstall_menu(installed_extensions)
         elif choice == "3":
+            logger.info("Menu: Update")
             update_menu(installed_extensions)
         elif choice == "4":
+            logger.info("Menu: Check")
             check_menu(cfg)
         elif choice == "5":
+            logger.info("Menu: Build only")
             build_only_menu(cfg.install_path)
         elif choice == "6":
+            logger.debug("Menu: Config")
             cfg = config_menu(cfg)
         elif choice == "0":
+            logger.info("Launcher exiting.")
             print("Goodbye.")
             return 0
         else:

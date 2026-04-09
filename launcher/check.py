@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+_logger = logging.getLogger("m12labs")
 
 
 # ---------------------------------------------------------------------------
@@ -99,9 +102,15 @@ def get_panel_version(install_root: Path) -> str | None:
     try:
         content = app_php.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        _logger.debug("Version lookup: config/app.php not found at %s", app_php)
         return None
     match = re.search(r"""['"]version['"]\s*=>\s*['"]([^'"]+)['"]""", content)
-    return match.group(1).strip() if match else None
+    version = match.group(1).strip() if match else None
+    if version:
+        _logger.debug("Version lookup: found version %r in %s", version, app_php)
+    else:
+        _logger.debug("Version lookup: no version key found in %s", app_php)
+    return version
 
 
 def _fetch_remote_manifest(version: str) -> dict | None:
@@ -123,6 +132,7 @@ def _fetch_remote_manifest(version: str) -> dict | None:
     _MAX_MANIFEST_BYTES = 1 * 1024 * 1024  # 1 MiB – guards against oversized responses
 
     url = RELEASE_MANIFEST_URL.format(version=version)
+    _logger.debug("Fetching remote manifest from %s", url)
     print(f"  Fetching manifest from {url} ...", end=" ", flush=True)
     try:
         with urllib.request.urlopen(url, timeout=MANIFEST_TIMEOUT) as resp:  # noqa: S310
@@ -131,24 +141,31 @@ def _fetch_remote_manifest(version: str) -> dict | None:
                 try:
                     raw = resp.read(_MAX_MANIFEST_BYTES)
                     if len(raw) == _MAX_MANIFEST_BYTES:
+                        _logger.debug("Remote manifest HTTP %s but response too large – skipping", status)
                         print(f"HTTP {status} OK (response too large – skipping)")
                         return None
                     data = json.loads(raw.decode("utf-8"))
+                    _logger.debug("Remote manifest fetched successfully (HTTP %s)", status)
                     print(f"HTTP {status} OK")
                     return data
                 except json.JSONDecodeError as exc:
+                    _logger.debug("Remote manifest parse error (HTTP %s): %s", status, exc)
                     print(f"HTTP {status} OK (parse error: {exc})")
                     return None
             else:
+                _logger.debug("Remote manifest unexpected HTTP status %s – skipping", status)
                 print(f"HTTP {status} (unexpected – skipping remote manifest)")
                 return None
     except urllib.error.HTTPError as exc:
+        _logger.debug("Remote manifest HTTP error: %s %s", exc.code, exc.reason)
         print(f"HTTP {exc.code} {exc.reason}")
         return None
     except urllib.error.URLError as exc:
+        _logger.debug("Remote manifest network error: %s", exc.reason)
         print(f"network error: {exc.reason}")
         return None
     except OSError as exc:
+        _logger.debug("Remote manifest OS error: %s", exc)
         print(f"OS error: {exc}")
         return None
 
@@ -179,19 +196,27 @@ def load_manifest(install_root: Path) -> tuple[dict | None, str]:
         remote = _fetch_remote_manifest(version)
         if remote is not None:
             url = RELEASE_MANIFEST_URL.format(version=version)
-            return remote, f"release manifest v{version} ({url})"
+            source = f"release manifest v{version} ({url})"
+            _logger.info("Manifest source: %s", source)
+            return remote, source
         print("  Remote manifest unavailable – falling back to local manifest")
+        _logger.debug("Remote manifest unavailable – falling back to local manifest")
     elif version:
         # Version string exists but did not match the strict X.Y.Z pattern.
         print(f"  Version string {version!r} is not a valid X.Y.Z release – skipping remote manifest")
+        _logger.debug("Version string %r is not a valid X.Y.Z release – skipping remote manifest", version)
     else:
         print("  No version found in config/app.php – skipping remote manifest")
+        _logger.debug("No version found in config/app.php – skipping remote manifest")
 
     local = _load_local_manifest(install_root)
     if local is not None:
-        return local, f"local manifest ({install_root / 'manifest.json'})"
+        source = f"local manifest ({install_root / 'manifest.json'})"
+        _logger.info("Manifest source: %s", source)
+        return local, source
 
     print("  No local manifest.json found either")
+    _logger.debug("No manifest available for %s", install_root)
     return None, "no manifest available"
 
 
@@ -241,6 +266,7 @@ def run_hash_checks(install_root: Path, manifest_files: dict[str, str]) -> list[
     for rel_path, expected_hash in sorted(manifest_files.items()):
         target = install_root / rel_path
         if not target.exists():
+            _logger.debug("File %s: MISSING – not found on disk", rel_path)
             results.append(FileResult(FileStatus.MISSING, rel_path))
             continue
         if not target.is_file():
@@ -249,11 +275,16 @@ def run_hash_checks(install_root: Path, manifest_files: dict[str, str]) -> list[
         try:
             actual = _sha256_file(target)
         except OSError:
+            _logger.debug("File %s: MISSING – could not read (OSError)", rel_path)
             results.append(FileResult(FileStatus.MISSING, rel_path))
             continue
         if actual == expected_hash:
+            _logger.debug("File %s: ORIGINAL (hash matched: %s)", rel_path, actual)
             results.append(FileResult(FileStatus.ORIGINAL, rel_path))
         else:
+            _logger.debug(
+                "File %s: MODIFIED – expected %s, got %s", rel_path, expected_hash, actual
+            )
             results.append(FileResult(FileStatus.MODIFIED, rel_path))
 
     # --- Detect extra files in tracked paths ---
@@ -268,6 +299,7 @@ def run_hash_checks(install_root: Path, manifest_files: dict[str, str]) -> list[
         for file_path in candidate_files:
             rel = str(file_path.relative_to(install_root))
             if rel not in manifest_files:
+                _logger.debug("File %s: EXTRA – untracked file not in manifest", rel)
                 results.append(FileResult(FileStatus.EXTRA, rel))
 
     return results
@@ -290,12 +322,14 @@ def run_checks(install_root: Path) -> list[CheckResult]:
     results: list[CheckResult] = []
 
     if not install_root.exists():
+        _logger.error("Check failed: install root not found: %s", install_root)
         results.append(
             CheckResult(Status.FAIL, "Install root", f"Directory not found: {install_root}")
         )
         return results
 
     if not install_root.is_dir():
+        _logger.error("Check failed: install root is not a directory: %s", install_root)
         results.append(
             CheckResult(Status.FAIL, "Install root", f"Not a directory: {install_root}")
         )
@@ -305,6 +339,7 @@ def run_checks(install_root: Path) -> list[CheckResult]:
     manifest, source = load_manifest(install_root)
 
     if manifest is None:
+        _logger.warning("Check: no manifest available for %s – falling back to existence checks", install_root)
         results.append(
             CheckResult(Status.WARN, "Manifest", f"Could not load manifest – {source}")
         )
@@ -312,8 +347,10 @@ def run_checks(install_root: Path) -> list[CheckResult]:
         for tracked in TRACKED_PATHS:
             target = install_root / tracked
             if not target.exists():
+                _logger.debug("Existence check: MISSING – %s", target)
                 results.append(CheckResult(Status.FAIL, tracked, f"Not found: {target}"))
             else:
+                _logger.debug("Existence check: present – %s", target)
                 results.append(CheckResult(Status.PASS, tracked, f"Present: {target}"))
         return results
 
@@ -321,6 +358,7 @@ def run_checks(install_root: Path) -> list[CheckResult]:
 
     # Hash-based validation.
     manifest_files = _extract_files(manifest)
+    _logger.debug("Hash check: comparing %d files from manifest", len(manifest_files))
     for fr in run_hash_checks(install_root, manifest_files):
         if fr.status == FileStatus.ORIGINAL:
             results.append(CheckResult(Status.PASS, fr.path, "original", file_status=fr.status))
