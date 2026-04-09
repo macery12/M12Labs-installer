@@ -10,8 +10,6 @@ from pathlib import Path
 from typing import Sequence
 
 INSTALL_NOTICE_DELAY_SECONDS = 2
-DEFAULT_PROJECT_ROOT = Path("/root/M12Labs-Extension")
-PROJECT_ROOT_ENV = "M12LABS_PROJECT_ROOT"
 
 
 def run_command(command: Sequence[str], cwd: Path) -> bool:
@@ -52,7 +50,7 @@ def get_package_manager() -> str | None:
 
 def with_privilege(command: Sequence[str]) -> list[str] | None:
     try:
-        is_root = os.geteuid() == 0
+        is_root = os.getuid() == 0
     except AttributeError:
         is_root = False
 
@@ -161,24 +159,19 @@ def show_install_notice() -> None:
     time.sleep(INSTALL_NOTICE_DELAY_SECONDS)
 
 
-def build_only(project_root: Path | None = None) -> None:
-    if project_root:
-        resolved_project_root = project_root
-    else:
-        env_project_root = os.getenv(PROJECT_ROOT_ENV)
-        resolved_project_root = Path(env_project_root) if env_project_root else DEFAULT_PROJECT_ROOT
-    package_json = resolved_project_root / "package.json"
-    try:
-        package_json_exists = package_json.exists()
-    except OSError as error:
-        print(f"Failed to check package.json in: {resolved_project_root}")
-        print("Unable to access path. Verify the directory exists and you have read permissions.")
-        print(f"You can override the default path with {PROJECT_ROOT_ENV}.")
-        print(f"Path access error: {error}")
-        return
+def build_only(project_root: Path) -> None:
+    """Run the full build flow for the given project root.
 
-    if not package_json_exists:
-        print(f"No package.json found in: {resolved_project_root}")
+    Checks for package.json first, then ensures Node.js and pnpm are
+    available (installing them if needed), and finally runs
+    ``pnpm install`` followed by ``pnpm build``.
+
+    The caller is responsible for supplying a valid project root path.
+    """
+    package_json = project_root / "package.json"
+    if not package_json.exists():
+        print(f"\nNo package.json found in: {project_root}")
+        print("Build flow stopped.")
         return
 
     missing_dependencies = not shutil.which("node") or not shutil.which("pnpm")
@@ -193,12 +186,12 @@ def build_only(project_root: Path | None = None) -> None:
         print("\nBuild flow failed: pnpm is required but could not be prepared.")
         return
 
-    install_ok = run_command(["pnpm", "install"], cwd=resolved_project_root)
+    install_ok = run_command(["pnpm", "install"], cwd=project_root)
     if not install_ok:
         print("\nBuild flow failed. `pnpm install` did not complete successfully.")
         return
 
-    build_ok = run_command(["pnpm", "build"], cwd=resolved_project_root)
+    build_ok = run_command(["pnpm", "build"], cwd=project_root)
     if build_ok:
         print("\nBuild flow completed successfully.")
     else:
