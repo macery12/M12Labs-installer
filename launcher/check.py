@@ -34,8 +34,9 @@ RELEASE_MANIFEST_URL = (
 MANIFEST_TIMEOUT = 10  # seconds
 
 # Strict semver-like pattern accepted for release manifest URL construction.
-# Only versions matching X.Y.Z (all numeric) are allowed to prevent SSRF.
-_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+# Only versions matching X.Y.Z (all numeric, each component ≤ 5 digits) are
+# allowed to prevent SSRF via a manipulated config/app.php version string.
+_VERSION_RE = re.compile(r"^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$")
 
 # Directories/files scanned when looking for extra (untracked) files.
 # Add new entries here to widen the scope of the extra-file search.
@@ -114,6 +115,13 @@ def _fetch_remote_manifest(version: str) -> dict | None:
     Prints live progress (URL, HTTP status, or error reason) to stdout so the
     user is not left waiting at a blank screen during the network call.
     """
+    # Defense-in-depth: reject versions that did not pass the caller's gate.
+    if not _VERSION_RE.match(version):
+        print(f"  Skipping remote manifest – version {version!r} failed format check")
+        return None
+
+    _MAX_MANIFEST_BYTES = 1 * 1024 * 1024  # 1 MiB – guards against oversized responses
+
     url = RELEASE_MANIFEST_URL.format(version=version)
     print(f"  Fetching manifest from {url} ...", end=" ", flush=True)
     try:
@@ -121,7 +129,11 @@ def _fetch_remote_manifest(version: str) -> dict | None:
             status = resp.status
             if status == 200:
                 try:
-                    data = json.loads(resp.read().decode("utf-8"))
+                    raw = resp.read(_MAX_MANIFEST_BYTES)
+                    if len(raw) == _MAX_MANIFEST_BYTES:
+                        print(f"HTTP {status} OK (response too large – skipping)")
+                        return None
+                    data = json.loads(raw.decode("utf-8"))
                     print(f"HTTP {status} OK")
                     return data
                 except json.JSONDecodeError as exc:
