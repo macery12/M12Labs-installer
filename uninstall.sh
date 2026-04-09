@@ -1,11 +1,10 @@
 #!/bin/sh
-# uninstall.sh — Remove the M12 Labs extension launcher.
+# uninstall.sh — Fully remove the M12 Labs extension launcher.
 #
 # Usage:
-#   sh uninstall.sh            # removes the command wrapper only
-#   sh uninstall.sh --purge    # also removes the cloned repository directory
+#   sh uninstall.sh
 #
-# Pass --purge to additionally delete the local repository clone.
+# Removes the command wrapper and the cloned repository directory.
 # No network access is required; this script only touches local files.
 
 set -eu
@@ -25,22 +24,6 @@ log() {
 }
 
 # ---------------------------------------------------------------------------
-# Parse arguments
-# ---------------------------------------------------------------------------
-
-PURGE=0
-for arg in "$@"; do
-    case "$arg" in
-        --purge) PURGE=1 ;;
-        *)
-            printf 'Unknown option: %s\n' "$arg" >&2
-            printf 'Usage: sh uninstall.sh [--purge]\n' >&2
-            exit 1
-            ;;
-    esac
-done
-
-# ---------------------------------------------------------------------------
 # Remove the command wrapper
 # ---------------------------------------------------------------------------
 
@@ -55,26 +38,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Optionally remove the repository clone
+# Remove the repository clone
 # ---------------------------------------------------------------------------
 
-if [ "$PURGE" -eq 1 ]; then
-    if [ -d "$INSTALL_DIR" ]; then
-        # Safety check: only remove the directory if it looks like our repo
-        # (i.e. it contains a launcher/main.py).  This avoids accidents if the
-        # variable somehow resolves to an unexpected path.
-        if [ -f "$INSTALL_DIR/launcher/main.py" ]; then
-            rm -rf "$INSTALL_DIR"
-            log "Removed repository: $INSTALL_DIR"
-        else
-            log "Skipping removal of $INSTALL_DIR — does not look like the expected repo."
-        fi
+if [ -d "$INSTALL_DIR" ]; then
+    # Safety check: only remove the directory if it looks like our repo
+    # (i.e. it contains a launcher/main.py).  This avoids accidents if the
+    # variable somehow resolves to an unexpected path.
+    if [ -f "$INSTALL_DIR/launcher/main.py" ]; then
+        rm -rf "$INSTALL_DIR"
+        log "Removed repository: $INSTALL_DIR"
     else
-        log "Repository directory not found (already removed?): $INSTALL_DIR"
+        log "Skipping removal of $INSTALL_DIR — does not look like the expected repo."
     fi
 else
-    log "Repository kept at: $INSTALL_DIR"
-    log "(Re-run with --purge to also remove the repository.)"
+    log "Repository directory not found (already removed?): $INSTALL_DIR"
 fi
 
 printf '\nUninstall complete.\n\n'
