@@ -39,6 +39,133 @@ def run_command(command: Sequence[str], cwd: Path) -> bool:
         return False
 
 
+def run_command_no_cwd(command: Sequence[str]) -> bool:
+    print(f"\n$ {' '.join(command)}")
+    try:
+        completed = subprocess.run(command, check=False)
+        return completed.returncode == 0
+    except FileNotFoundError:
+        print(f"Command not found: {command[0]}")
+        return False
+
+
+def get_package_manager() -> str | None:
+    if shutil.which("apt-get"):
+        return "apt-get"
+    if shutil.which("dnf"):
+        return "dnf"
+    if shutil.which("yum"):
+        return "yum"
+    if shutil.which("pacman"):
+        return "pacman"
+    if shutil.which("zypper"):
+        return "zypper"
+    if shutil.which("apk"):
+        return "apk"
+    return None
+
+
+def with_privilege(command: Sequence[str]) -> list[str] | None:
+    if os.geteuid() == 0:
+        return list(command)
+    sudo_path = shutil.which("sudo")
+    if sudo_path:
+        return ["sudo", *command]
+    return None
+
+
+def install_packages(packages: Sequence[str]) -> bool:
+    package_manager = get_package_manager()
+    if not package_manager:
+        print("No supported package manager found (apt-get/dnf/yum/pacman/zypper/apk).")
+        return False
+
+    if package_manager == "apt-get":
+        update_cmd = with_privilege(["apt-get", "update"])
+        install_cmd = with_privilege(["apt-get", "install", "-y", *packages])
+    elif package_manager == "dnf":
+        update_cmd = None
+        install_cmd = with_privilege(["dnf", "install", "-y", *packages])
+    elif package_manager == "yum":
+        update_cmd = None
+        install_cmd = with_privilege(["yum", "install", "-y", *packages])
+    elif package_manager == "pacman":
+        update_cmd = with_privilege(["pacman", "-Sy"])
+        install_cmd = with_privilege(["pacman", "--noconfirm", "-S", *packages])
+    elif package_manager == "zypper":
+        update_cmd = None
+        install_cmd = with_privilege(["zypper", "--non-interactive", "install", *packages])
+    else:
+        update_cmd = None
+        install_cmd = with_privilege(["apk", "add", *packages])
+
+    if not install_cmd:
+        print("Missing root privileges and `sudo` is unavailable; cannot install packages.")
+        return False
+
+    print(f"Installing packages via {package_manager}: {', '.join(packages)}")
+    if update_cmd and not run_command_no_cwd(update_cmd):
+        return False
+    return run_command_no_cwd(install_cmd)
+
+
+def ensure_node_installed() -> bool:
+    if shutil.which("node"):
+        print("Node.js: already installed.")
+        return True
+
+    print("Node.js: not found, attempting automatic installation...")
+    package_manager = get_package_manager()
+    if package_manager in {"apt-get", "dnf", "yum", "zypper"}:
+        package_sets = [["nodejs", "npm"], ["nodejs"]]
+    elif package_manager == "pacman":
+        package_sets = [["nodejs", "npm"], ["nodejs"]]
+    elif package_manager == "apk":
+        package_sets = [["nodejs", "npm"], ["nodejs", "nodejs-current", "npm"]]
+    else:
+        package_sets = [["nodejs", "npm"], ["nodejs"]]
+
+    for package_set in package_sets:
+        if install_packages(package_set) and shutil.which("node"):
+            break
+
+    if not shutil.which("node"):
+        print("Failed to install Node.js automatically.")
+        return False
+
+    print("Node.js installation completed.")
+    return True
+
+
+def ensure_pnpm_installed() -> bool:
+    if shutil.which("pnpm"):
+        print("pnpm: already installed.")
+        return True
+
+    print("pnpm: not found, attempting automatic installation...")
+
+    if shutil.which("corepack"):
+        if run_command_no_cwd(["corepack", "enable"]) and run_command_no_cwd(
+            ["corepack", "prepare", "pnpm@latest", "--activate"]
+        ):
+            if shutil.which("pnpm"):
+                print("pnpm installation completed via corepack.")
+                return True
+
+    npm_path = shutil.which("npm")
+    if npm_path and run_command_no_cwd(["npm", "install", "-g", "pnpm@latest"]):
+        if shutil.which("pnpm"):
+            print("pnpm installation completed via npm.")
+            return True
+
+    if install_packages(["pnpm"]) and shutil.which("pnpm"):
+        print("pnpm installation completed via system package manager.")
+        return True
+
+    print("Failed to install pnpm automatically.")
+    return False
+
+
 def ensure_linux() -> bool:
     if platform.system().lower() != "linux":
         print("This launcher template currently supports Linux only.")
@@ -161,13 +288,13 @@ def build_only() -> None:
         wait_for_enter()
         return
 
-    node_path = shutil.which("node")
-    pnpm_path = shutil.which("pnpm")
-    print(f"Node: {'FOUND' if node_path else 'NOT FOUND'}")
-    print(f"pnpm: {'FOUND' if pnpm_path else 'NOT FOUND'}")
+    if not ensure_node_installed():
+        print("\nBuild flow failed: Node.js is required but could not be prepared.")
+        wait_for_enter()
+        return
 
-    if not node_path or not pnpm_path:
-        print("\nInstall missing dependencies and try again.")
+    if not ensure_pnpm_installed():
+        print("\nBuild flow failed: pnpm is required but could not be prepared.")
         wait_for_enter()
         return
 
