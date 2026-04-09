@@ -6,6 +6,7 @@ from __future__ import annotations
 import platform
 import subprocess
 import sys
+import os
 
 from build import build_only as run_build_only
 
@@ -17,7 +18,7 @@ PAGE_SIZE = 6
 
 
 def clear_screen() -> None:
-    if sys.stdout.isatty():
+    if sys.stdout.isatty() and os.getenv("TERM"):
         subprocess.run(["clear"], check=False)
     else:
         print("\n" * 2, end="")
