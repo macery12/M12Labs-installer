@@ -7,7 +7,6 @@ import platform
 import subprocess
 import sys
 import os
-from pathlib import Path
 
 from build import build_only as run_build_only
 
@@ -144,13 +143,6 @@ def check_menu() -> None:
     wait_for_enter()
 
 
-def find_project_root(start: Path) -> Path | None:
-    for parent in [start] + list(start.parents):
-        if (parent / "package.json").exists():
-            return parent
-    return None
-
-
 def build_only() -> None:
     clear_screen()
     print("Build only\n")
@@ -159,15 +151,7 @@ def build_only() -> None:
         wait_for_enter()
         return
 
-    start_path = Path(__file__).resolve()
-    project_root = find_project_root(start_path)
-
-    if not project_root:
-        print("Could not find package.json")
-        wait_for_enter()
-        return
-
-    run_build_only(project_root)
+    run_build_only()
     wait_for_enter()
 
 

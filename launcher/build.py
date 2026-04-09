@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 INSTALL_NOTICE_DELAY_SECONDS = 2
+DEFAULT_PROJECT_ROOT = Path("/root/M12Labs-Extension")
 
 
 def run_command(command: Sequence[str], cwd: Path) -> bool:
@@ -159,16 +160,19 @@ def show_install_notice() -> None:
     time.sleep(INSTALL_NOTICE_DELAY_SECONDS)
 
 
-def build_only(project_root: Path) -> None:
-    package_json = project_root / "package.json"
-    if not package_json.exists():
-        print(f"\nNo package.json found in: {project_root}")
-        print("Build flow stopped before dependency installation.")
+def build_only(project_root: Path | None = None) -> None:
+    resolved_project_root = project_root or DEFAULT_PROJECT_ROOT
+    package_json = resolved_project_root / "package.json"
+    try:
+        package_json_exists = package_json.exists()
+    except OSError:
+        package_json_exists = False
+
+    if not package_json_exists:
+        print(f"No package.json found in: {resolved_project_root}")
         return
 
-    missing_dependencies = not shutil.which("node") or not shutil.which("pnpm")
-    if missing_dependencies:
-        show_install_notice()
+    show_install_notice()
 
     if not ensure_node_installed():
         print("\nBuild flow failed: Node.js is required but could not be prepared.")
@@ -178,12 +182,12 @@ def build_only(project_root: Path) -> None:
         print("\nBuild flow failed: pnpm is required but could not be prepared.")
         return
 
-    install_ok = run_command(["pnpm", "install"], cwd=project_root)
+    install_ok = run_command(["pnpm", "install"], cwd=resolved_project_root)
     if not install_ok:
         print("\nBuild flow failed. `pnpm install` did not complete successfully.")
         return
 
-    build_ok = run_command(["pnpm", "build"], cwd=project_root)
+    build_ok = run_command(["pnpm", "build"], cwd=resolved_project_root)
     if build_ok:
         print("\nBuild flow completed successfully.")
     else:
