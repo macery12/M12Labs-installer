@@ -117,6 +117,25 @@ def save_config(config: Config) -> None:
     )
 
 
+_REQUIRED_FILES = ("artisan", "package.json", "composer.json")
+
+
+def validate_install_path(path: Path) -> str | None:
+    """Check that *path* looks like a valid M12 Labs panel installation.
+
+    Returns ``None`` when the path is valid, or a human-readable error string
+    describing the first problem found.
+    """
+    if not path.exists():
+        return "directory does not exist"
+    if not path.is_dir():
+        return "not a directory"
+    for required in _REQUIRED_FILES:
+        if not (path / required).is_file():
+            return f"missing `{required}`"
+    return None
+
+
 def prompt_for_install_path(config: Config) -> Config:
     """Prompt the user for the panel install path, persist and return updated config."""
     if config.install_path is None:
@@ -128,13 +147,20 @@ def prompt_for_install_path(config: Config) -> Config:
     print(f"  Example: {EXAMPLE_PATH}")
     while True:
         raw = input("Enter panel install path: ").strip()
-        if raw:
-            config.install_path = Path(raw)
-            save_config(config)
-            _logger.info("Install path set to: %s", config.install_path)
-            print(f"Saved install path: {config.install_path}")
-            return config
-        print("Path cannot be empty. Please try again.")
+        if not raw:
+            print("Path cannot be empty. Please try again.")
+            continue
+        candidate = Path(raw)
+        error = validate_install_path(candidate)
+        if error:
+            _logger.warning("Invalid install path %s: %s", candidate, error)
+            print(f"Invalid path: {error}. Please try again.")
+            continue
+        config.install_path = candidate
+        save_config(config)
+        _logger.info("Install path set to: %s", config.install_path)
+        print(f"Saved install path: {config.install_path}")
+        return config
 
 
 def ensure_install_path(config: Config) -> Config:
