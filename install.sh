@@ -1,8 +1,11 @@
 #!/bin/sh
 # install.sh — Install or update the M12 Labs extension launcher.
 #
-# Usage:
+# Recommended usage (two-step, allows you to review the script before running):
+#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-Extensions/main/install.sh -o install.sh
 #   sh install.sh
+#
+# One-liner (pipe to sh) — only use this if you trust the source:
 #   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-Extensions/main/install.sh | sh
 #
 # Rerunning this script updates an existing installation.
@@ -54,7 +57,10 @@ mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
 if [ -d "$INSTALL_DIR/.git" ]; then
     log "Existing installation found — updating to latest $REPO_BRANCH..."
-    # Fetch and hard-reset so local edits don't block the update.
+    # Fetch and hard-reset to origin so the managed install stays in sync.
+    # This intentionally discards any local changes inside INSTALL_DIR.
+    # Do not edit files inside $INSTALL_DIR directly; they will be overwritten
+    # the next time you run this installer.
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
     git -C "$INSTALL_DIR" reset --hard "origin/$REPO_BRANCH"
     log "Repository updated."
@@ -93,6 +99,8 @@ case ":$PATH:" in
     *)
         printf '\nWarning: %s is not in your PATH.\n' "$BIN_DIR"
         printf 'Add the following line to your shell profile (~/.bashrc, ~/.profile, etc.):\n'
+        # SC2016: $PATH is intentionally literal here — users paste this into their shell profile.
+        # shellcheck disable=SC2016
         printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
         printf 'Then open a new terminal or run:  source ~/.bashrc\n'
         ;;
