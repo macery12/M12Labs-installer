@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Linux-first M12 Labs extension manager launcher template."""
+"""Linux-first M12 Labs extension manager launcher."""
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 import sys
-import os
 from pathlib import Path
 
 from build import build_only as run_build_only
+from check import format_results, has_failures, run_checks
+from install_path import get_install_path
 
 PLACEHOLDER_EXTENSION_COUNT = 12
 EXTENSION_CATALOG = [
@@ -31,7 +33,7 @@ def wait_for_enter() -> None:
 
 def ensure_linux() -> bool:
     if platform.system().lower() != "linux":
-        print("This launcher template currently supports Linux only.")
+        print("This launcher currently supports Linux only.")
         return False
     return True
 
@@ -63,8 +65,7 @@ def install_menu() -> None:
         choice = input("\nSelect an option: ").strip()
         if choice.isdigit() and 1 <= int(choice) <= len(page_items):
             parsed_choice = int(choice)
-            item_index = parsed_choice - 1
-            selected = page_items[item_index]
+            selected = page_items[parsed_choice - 1]
             print(f"\nInstall placeholder for: {selected}")
             print("Real install logic will be added in a future phase.")
             wait_for_enter()
@@ -134,24 +135,23 @@ def update_menu(installed_extensions: list[str]) -> None:
         wait_for_enter()
 
 
-def check_menu() -> None:
+def check_menu(install_root: Path) -> None:
     clear_screen()
-    print("Check / validation mode (template)\n")
-    print(f"Platform check: {'OK' if ensure_linux() else 'FAILED'}")
-    print("State check: placeholder")
-    print("Dependency check: placeholder")
-    print("\nFull validation checks will be added in a future phase.")
+    print("Check / validation mode\n")
+    print(f"Panel install path: {install_root}\n")
+
+    results = run_checks(install_root)
+    print(format_results(results))
+
+    if has_failures(results):
+        print("\nSome checks failed. Review the paths above.")
+    else:
+        print("\nAll checks passed.")
+
     wait_for_enter()
 
 
-def find_project_root(start: Path) -> Path | None:
-    for parent in [start] + list(start.parents):
-        if (parent / "package.json").exists():
-            return parent
-    return None
-
-
-def build_only() -> None:
+def build_only_menu(install_root: Path) -> None:
     clear_screen()
     print("Build only\n")
 
@@ -159,26 +159,21 @@ def build_only() -> None:
         wait_for_enter()
         return
 
-    start_path = Path(__file__).resolve()
-    project_root = find_project_root(start_path)
-
-    if not project_root:
-        print("Could not find package.json")
-        wait_for_enter()
-        return
-
-    run_build_only(project_root)
+    run_build_only(install_root)
     wait_for_enter()
 
 
 def main() -> int:
     if not ensure_linux():
         return 1
+
+    install_root = get_install_path()
     installed_extensions: list[str] = []
 
     while True:
         clear_screen()
-        print("M12 Labs Linux Extension Manager (template)\n")
+        print("M12 Labs Linux Extension Manager\n")
+        print(f"Panel path: {install_root}\n")
         print("1. Install")
         print("2. Uninstall")
         print("3. Update")
@@ -194,9 +189,9 @@ def main() -> int:
         elif choice == "3":
             update_menu(installed_extensions)
         elif choice == "4":
-            check_menu()
+            check_menu(install_root)
         elif choice == "5":
-            build_only()
+            build_only_menu(install_root)
         elif choice == "0":
             print("Goodbye.")
             return 0
@@ -207,3 +202,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

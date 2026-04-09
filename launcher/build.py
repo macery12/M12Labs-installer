@@ -160,10 +160,18 @@ def show_install_notice() -> None:
 
 
 def build_only(project_root: Path) -> None:
+    """Run the full build flow for the given project root.
+
+    Checks for package.json first, then ensures Node.js and pnpm are
+    available (installing them if needed), and finally runs
+    ``pnpm install`` followed by ``pnpm build``.
+
+    The caller is responsible for supplying a valid project root path.
+    """
     package_json = project_root / "package.json"
     if not package_json.exists():
         print(f"\nNo package.json found in: {project_root}")
-        print("Build flow stopped before dependency installation.")
+        print("Build flow stopped.")
         return
 
     missing_dependencies = not shutil.which("node") or not shutil.which("pnpm")
