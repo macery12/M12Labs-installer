@@ -80,6 +80,9 @@ class CheckResult:
     status: Status
     label: str
     message: str
+    # Set for results that represent individual file checks; None for
+    # infrastructure results (e.g. "Install root", "Manifest").
+    file_status: FileStatus | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +106,9 @@ def get_panel_version(install_root: Path) -> str | None:
 def _fetch_remote_manifest(version: str) -> dict | None:
     """Download the release manifest for *version* from GitHub.
 
-    *version* must already be validated as a strict X.Y.Z string.
+    *version* must already be validated against ``_VERSION_RE`` by the caller
+    (see :func:`load_manifest`) before being interpolated into the URL, which
+    prevents SSRF via a manipulated ``config/app.php`` version string.
     Returns the parsed JSON dict, or ``None`` on any error.
     """
     url = RELEASE_MANIFEST_URL.format(version=version)
@@ -276,13 +281,13 @@ def run_checks(install_root: Path) -> list[CheckResult]:
     manifest_files = _extract_files(manifest)
     for fr in run_hash_checks(install_root, manifest_files):
         if fr.status == FileStatus.ORIGINAL:
-            results.append(CheckResult(Status.PASS, fr.path, "original"))
+            results.append(CheckResult(Status.PASS, fr.path, "original", file_status=fr.status))
         elif fr.status == FileStatus.MODIFIED:
-            results.append(CheckResult(Status.FAIL, fr.path, "MODIFIED – hash mismatch"))
+            results.append(CheckResult(Status.FAIL, fr.path, "MODIFIED – hash mismatch", file_status=fr.status))
         elif fr.status == FileStatus.MISSING:
-            results.append(CheckResult(Status.FAIL, fr.path, "MISSING – not found on disk"))
+            results.append(CheckResult(Status.FAIL, fr.path, "MISSING – not found on disk", file_status=fr.status))
         elif fr.status == FileStatus.EXTRA:
-            results.append(CheckResult(Status.WARN, fr.path, "extra / untracked file"))
+            results.append(CheckResult(Status.WARN, fr.path, "extra / untracked file", file_status=fr.status))
 
     return results
 
@@ -295,17 +300,45 @@ def format_results(results: list[CheckResult]) -> str:
 
 
 def format_results_concise(results: list[CheckResult]) -> str:
-    """Return a compact one-line summary (pass/warn/fail counts)."""
+    """Return a summary with counts and the path of every non-passing file.
+
+    In non-debug mode this is the default view.  It always names modified,
+    missing, or extra files so the user can act without enabling detailed mode.
+    """
     total = len(results)
     passed = sum(1 for r in results if r.status == Status.PASS)
     warned = sum(1 for r in results if r.status == Status.WARN)
     failed = sum(1 for r in results if r.status == Status.FAIL)
+
     parts = [f"{passed}/{total} checks passed"]
     if warned:
         parts.append(f"{warned} warning(s)")
     if failed:
         parts.append(f"{failed} failure(s)")
-    return "  " + ", ".join(parts)
+
+    lines: list[str] = []
+
+    # Always surface the manifest source so users know what was checked against.
+    manifest_result = next((r for r in results if r.label == "Manifest"), None)
+    if manifest_result is not None:
+        prefix = "  ✓" if manifest_result.status == Status.PASS else "  !"
+        lines.append(f"{prefix} Manifest: {manifest_result.message}")
+        lines.append("")
+
+    lines.append("  " + ", ".join(parts))
+
+    # List every non-passing file with its full relative path and reason.
+    symbols = {Status.FAIL: "[FAIL]", Status.WARN: "[WARN]"}
+    non_passing = [
+        r for r in results
+        if r.status in (Status.FAIL, Status.WARN) and r.label != "Manifest"
+    ]
+    if non_passing:
+        lines.append("")
+        for r in non_passing:
+            lines.append(f"  {symbols[r.status]} {r.label}  –  {r.message}")
+
+    return "\n".join(lines)
 
 
 def has_failures(results: list[CheckResult]) -> bool:
@@ -316,7 +349,6 @@ def has_failures(results: list[CheckResult]) -> bool:
 def has_modified_files(results: list[CheckResult]) -> bool:
     """Return True if any file was detected as MODIFIED or MISSING."""
     return any(
-        r.status == Status.FAIL
-        and (r.message.startswith("MODIFIED") or r.message.startswith("MISSING"))
+        r.file_status in (FileStatus.MODIFIED, FileStatus.MISSING)
         for r in results
     )
