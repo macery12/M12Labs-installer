@@ -309,15 +309,36 @@ def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
         return
 
     logger.info("Restore started. Archive: %s  Target: %s", selected["filename"], install_path)
-    print("\nRestoring backup…")
-    try:
-        restore_backup(selected["path"], install_path)
+    print("\nNote: For slower systems this may take a minute.")
+    print("Restoring backup…\n")
+
+    result: dict = {}
+
+    def _run_restore() -> None:
+        try:
+            restore_backup(selected["path"], install_path)
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    thread = threading.Thread(target=_run_restore, daemon=True)
+    thread.start()
+
+    spinner = ["|", "/", "-", "\\"]
+    idx = 0
+    while thread.is_alive():
+        print(f"\r  {spinner[idx % len(spinner)]}  Working…", end="", flush=True)
+        idx += 1
+        time.sleep(0.15)
+    thread.join()
+    print("\r" + " " * 20 + "\r", end="", flush=True)  # clear spinner line
+
+    if "error" in result:
+        logger.error("Restore failed: %s", result["error"])
+        print(f"✗ Restore failed: {result['error']}")
+    else:
         logger.info("Restore complete. Archive: %s", selected["filename"])
-        print("\n✓ Restore complete.")
+        print("✓ Restore complete.")
         print("  Restart the launcher to pick up any configuration changes from the restored backup.")
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Restore failed: %s", exc)
-        print(f"\n✗ Restore failed: {exc}")
     wait_for_enter()
 
 
