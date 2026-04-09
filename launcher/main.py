@@ -290,6 +290,7 @@ def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
         restore_backup(selected["path"], install_path)
         logger.info("Restore complete. Archive: %s", selected["filename"])
         print("\n✓ Restore complete.")
+        print("  Restart the launcher to pick up any configuration changes from the restored backup.")
     except Exception as exc:  # noqa: BLE001
         logger.error("Restore failed: %s", exc)
         print(f"\n✗ Restore failed: {exc}")

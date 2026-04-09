@@ -47,11 +47,12 @@ class BackupEntry(TypedDict):
 
 def _human_size(size_bytes: int) -> str:
     """Return a human-readable file size string."""
+    value = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes //= 1024
-    return f"{size_bytes:.1f} TB"
+        if value < 1024:
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"
 
 
 def default_backups_dir() -> Path:
@@ -166,4 +167,30 @@ def restore_backup(archive_path: Path, install_path: Path) -> None:
         # The archive was created with arcname=install_path.name, so the
         # top-level entry in the tar matches the directory name.  Extracting
         # into install_path.parent recreates that directory at the right place.
-        tar.extractall(path=install_path.parent)  # noqa: S202
+        #
+        # Validate members before extraction to prevent path traversal attacks.
+        _validate_tar_members(tar, install_path.name)
+        try:
+            # Python 3.12+ supports filter='data' which strips dangerous paths.
+            tar.extractall(path=install_path.parent, filter="data")
+        except TypeError:
+            tar.extractall(path=install_path.parent)  # noqa: S202
+
+
+def _validate_tar_members(tar: tarfile.TarFile, expected_root: str) -> None:
+    """Raise ValueError if any tar member could escape the expected root directory.
+
+    Checks that every member path starts with *expected_root* and contains no
+    absolute paths or ``..`` components.
+    """
+    for member in tar.getmembers():
+        member_path = Path(member.name)
+        if member_path.is_absolute():
+            raise ValueError(f"Unsafe archive: absolute path found: {member.name}")
+        parts = member_path.parts
+        if ".." in parts:
+            raise ValueError(f"Unsafe archive: path traversal found: {member.name}")
+        if parts and parts[0] != expected_root:
+            raise ValueError(
+                f"Unsafe archive: unexpected root '{parts[0]}' (expected '{expected_root}')"
+            )
