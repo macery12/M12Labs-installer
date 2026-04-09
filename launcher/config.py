@@ -14,6 +14,9 @@ File format (TOML)::
 
 from __future__ import annotations
 
+import logging
+import os
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +25,8 @@ EXAMPLE_PATH = "/var/www/m12labs"
 
 # Config file lives next to this source file so it stays with the launcher.
 _CONFIG_FILE = Path(__file__).parent / "config.toml"
+
+_logger = logging.getLogger("m12labs")
 
 
 @dataclass
@@ -39,20 +44,37 @@ def load_config() -> Config:
         with _CONFIG_FILE.open("rb") as fh:
             data = tomllib.load(fh)
     except OSError:
+        _logger.debug("Config file not found or unreadable (%s) – using defaults", _CONFIG_FILE)
         return Config()
 
     install_path_str = data.get("install_path", "").strip()
-    return Config(
+    cfg = Config(
         install_path=Path(install_path_str) if install_path_str else None,
         show_detailed_checks=bool(data.get("show_detailed_checks", False)),
         build_on_update=bool(data.get("build_on_update", False)),
         build_on_uninstall=bool(data.get("build_on_uninstall", False)),
         text_logs_enabled=bool(data.get("text_logs_enabled", True)),
     )
+    _logger.debug(
+        "Config loaded from %s: install_path=%s, text_logs_enabled=%s, "
+        "show_detailed_checks=%s, build_on_update=%s, build_on_uninstall=%s",
+        _CONFIG_FILE,
+        cfg.install_path,
+        cfg.text_logs_enabled,
+        cfg.show_detailed_checks,
+        cfg.build_on_update,
+        cfg.build_on_uninstall,
+    )
+    return cfg
 
 
 def save_config(config: Config) -> None:
-    """Write all config fields to ``config.toml``."""
+    """Write all config fields to ``config.toml`` using an atomic write.
+
+    The new content is written to a temporary file in the same directory first,
+    then renamed into place.  This prevents a partially-written (corrupted)
+    config file if the process is interrupted mid-write.
+    """
     install_path_value = str(config.install_path) if config.install_path is not None else ""
     lines = [
         f'install_path = "{install_path_value}"',
@@ -61,14 +83,47 @@ def save_config(config: Config) -> None:
         f"build_on_uninstall = {str(config.build_on_uninstall).lower()}",
         f"text_logs_enabled = {str(config.text_logs_enabled).lower()}",
     ]
-    _CONFIG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    content = "\n".join(lines) + "\n"
+
+    config_dir = _CONFIG_FILE.parent
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, prefix=".config_tmp_", suffix=".toml")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, _CONFIG_FILE)
+        except Exception:
+            # Clean up the temp file on failure to avoid leaving debris.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        _logger.error("Failed to save config to %s: %s", _CONFIG_FILE, exc)
+        raise
+
+    _logger.debug(
+        "Config saved to %s: install_path=%s, text_logs_enabled=%s, "
+        "show_detailed_checks=%s, build_on_update=%s, build_on_uninstall=%s",
+        _CONFIG_FILE,
+        config.install_path,
+        config.text_logs_enabled,
+        config.show_detailed_checks,
+        config.build_on_update,
+        config.build_on_uninstall,
+    )
 
 
 def prompt_for_install_path(config: Config) -> Config:
     """Prompt the user for the panel install path, persist and return updated config."""
     if config.install_path is None:
+        _logger.info("Install path not configured – prompting user")
         print("\nPanel install location has not been configured yet.")
     else:
+        _logger.info("User changing install path (current: %s)", config.install_path)
         print(f"\nCurrent install path: {config.install_path}")
     print(f"  Example: {EXAMPLE_PATH}")
     while True:
@@ -76,6 +131,7 @@ def prompt_for_install_path(config: Config) -> Config:
         if raw:
             config.install_path = Path(raw)
             save_config(config)
+            _logger.info("Install path set to: %s", config.install_path)
             print(f"Saved install path: {config.install_path}")
             return config
         print("Path cannot be empty. Please try again.")
@@ -84,5 +140,6 @@ def prompt_for_install_path(config: Config) -> Config:
 def ensure_install_path(config: Config) -> Config:
     """Return config with ``install_path`` set, prompting the user if not yet configured."""
     if config.install_path is not None:
+        _logger.debug("Install path already set: %s", config.install_path)
         return config
     return prompt_for_install_path(config)

@@ -300,9 +300,14 @@ def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
     print(f"\nSelected:  {selected['filename']}")
     print(f"Timestamp: {selected['timestamp']}")
     print(f"Size:      {selected['size_human']}")
-    print(f"\nThis will REPLACE the contents of:\n  {install_path}")
-    confirm = input("\nRestore this backup? [y/N]: ").strip().lower()
-    if confirm != "y":
+    print()
+    print("⚠  WARNING: This operation cannot be undone.")
+    print(f"   ALL current contents of the following directory will be deleted")
+    print(f"   and replaced with the contents of the selected backup:")
+    print(f"     {install_path}")
+    print()
+    confirm = input("Type 'yes' to confirm the restore, or anything else to cancel: ").strip().lower()
+    if confirm != "yes":
         logger.info("Restore cancelled by user.")
         print("Restore cancelled.")
         wait_for_enter()
@@ -390,6 +395,33 @@ def config_menu(cfg: Config) -> Config:
             wait_for_enter()
 
 
+def _print_startup_summary(cfg: Config) -> None:
+    """Print a concise status summary when the launcher starts."""
+    from backup import default_backups_dir, list_backups
+
+    backups_dir = default_backups_dir()
+    backup_count = len(list_backups(backups_dir))
+
+    # Check whether a manifest is findable without doing a full network fetch.
+    manifest_note = "not checked at startup"
+    install_root = cfg.install_path
+    if install_root is not None and install_root.exists():
+        local_manifest = install_root / "manifest.json"
+        if local_manifest.exists():
+            manifest_note = "local manifest found"
+        else:
+            manifest_note = "no local manifest (will try remote on check)"
+
+    print("─" * 44)
+    print(f"  {'Install path':<15}: {cfg.install_path}")
+    print(f"  {'Text logging':<15}: {'enabled' if cfg.text_logs_enabled else 'disabled'}")
+    print(f"  {'Detailed checks':<15}: {'on' if cfg.show_detailed_checks else 'off'}")
+    print(f"  {'Backups':<15}: {backup_count} available")
+    print(f"  {'Manifest':<15}: {manifest_note}")
+    print("─" * 44)
+    print()
+
+
 def main() -> int:
     if not ensure_linux():
         return 1
@@ -404,7 +436,7 @@ def main() -> int:
     while True:
         clear_screen()
         print("M12 Labs Linux Extension Manager\n")
-        print(f"Panel path: {cfg.install_path}\n")
+        _print_startup_summary(cfg)
         print("1. Install")
         print("2. Uninstall")
         print("3. Update")
