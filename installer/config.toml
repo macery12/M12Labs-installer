@@ -1,5 +1,0 @@
-install_path = ""
-show_detailed_checks = true
-build_on_update = true
-build_on_uninstall = true
-text_logs_enabled = true

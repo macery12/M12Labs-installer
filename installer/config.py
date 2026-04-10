@@ -33,8 +33,8 @@ _logger = logging.getLogger("m12labs")
 class Config:
     install_path: Path | None = None
     show_detailed_checks: bool = False
-    build_on_update: bool = False
-    build_on_uninstall: bool = False
+    build_on_update: bool = True
+    build_on_uninstall: bool = True
     text_logs_enabled: bool = True
 
 
