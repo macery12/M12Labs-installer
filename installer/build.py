@@ -1,4 +1,4 @@
-"""Build flow helpers for the launcher."""
+"""Build flow helpers for the installer."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# uninstall.sh — Fully remove the M12 Labs extension launcher.
+# uninstall.sh — Fully remove the M12 Labs installer.
 #
 # Usage:
 #   sh uninstall.sh
@@ -9,7 +9,7 @@
 
 set -eu
 
-COMMAND_NAME="m12extensions"
+COMMAND_NAME="m12labs-installer"
 
 INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$COMMAND_NAME"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
@@ -27,8 +27,8 @@ log() {
 # Remove the command wrapper
 # ---------------------------------------------------------------------------
 
-printf '\nM12 Labs Extension Launcher — Uninstaller\n'
-printf '==========================================\n\n'
+printf '\nM12 Labs Installer — Uninstaller\n'
+printf '=================================\n\n'
 
 if [ -f "$COMMAND_PATH" ]; then
     rm -f "$COMMAND_PATH"
@@ -43,9 +43,9 @@ fi
 
 if [ -d "$INSTALL_DIR" ]; then
     # Safety check: only remove the directory if it looks like our repo
-    # (i.e. it contains a launcher/main.py).  This avoids accidents if the
+    # (i.e. it contains a installer/main.py).  This avoids accidents if the
     # variable somehow resolves to an unexpected path.
-    if [ -f "$INSTALL_DIR/launcher/main.py" ]; then
+    if [ -f "$INSTALL_DIR/installer/main.py" ]; then
         rm -rf "$INSTALL_DIR"
         log "Removed repository: $INSTALL_DIR"
     else

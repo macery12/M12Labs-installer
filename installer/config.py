@@ -1,4 +1,4 @@
-"""Config management for the M12 Labs launcher.
+"""Config management for the M12 Labs installer.
 
 Reads and writes ``config.toml`` located in the same directory as this file.
 Creates the file with sensible defaults when it does not exist yet.
@@ -23,7 +23,7 @@ from pathlib import Path
 
 EXAMPLE_PATH = "/var/www/m12labs"
 
-# Config file lives next to this source file so it stays with the launcher.
+# Config file lives next to this source file so it stays with the installer.
 _CONFIG_FILE = Path(__file__).parent / "config.toml"
 
 _logger = logging.getLogger("m12labs")

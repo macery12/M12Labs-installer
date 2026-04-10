@@ -1,11 +1,11 @@
-# M12 Labs Linux Extension Manager - Plan
+# M12 Labs Installer - Plan
 
 ## Overall goal
-Create a Linux-only extension manager launcher in `/launcher` with a clean,
+Create a Linux-only M12 Labs extension installer in `/installer` with a clean,
 runnable menu shell and room to grow as the real extension lifecycle is built
 out in future phases.
 
-This launcher targets the M12 Labs panel project layout:
+This installer targets the M12 Labs panel project layout:
 - `package.json` (frontend scripts; `pnpm build` → `vite build`)
 - `composer.json`
 - `artisan`
@@ -25,7 +25,7 @@ This launcher targets the M12 Labs panel project layout:
 ## Install path behavior
 - On the very first run the user is prompted for the panel install path.
 - The suggested example path is `/var/www/m12labs`.
-- The answer is saved to `launcher/config.toml` (TOML format, co-located with the launcher files).
+- The answer is saved to `installer/config.toml` (TOML format, co-located with the installer files).
 - Every subsequent run reloads the saved value without prompting again.
 - No hardcoded fallback paths are used anywhere.
 

@@ -1,4 +1,4 @@
-"""File logging setup for the M12 Labs launcher.
+"""File logging setup for the M12 Labs installer.
 
 Provides a single named logger (``m12labs``) that writes verbose debug output
 to a timestamped text file under ``<panel_root>/extension_logs/``.
@@ -65,7 +65,7 @@ def setup_logging(install_path: Path | None, text_logs_enabled: bool) -> logging
             logger.addHandler(file_handler)
         except OSError:
             # If the log directory or file cannot be created, silently
-            # continue without file logging rather than crashing the launcher.
+            # continue without file logging rather than crashing the installer.
             pass
 
     return logger

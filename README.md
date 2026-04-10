@@ -1,36 +1,34 @@
-# M12Labs Extensions (WIP)
+# M12 Labs Installer (WIP)
 
-This repo will eventually host multiple M12 Labs extensions.
-
-For now it includes a small **Linux-only launcher** that helps work with a M12 Labs panel install (check files, run a build, etc.).
+This repo hosts the **M12 Labs installer** — a Linux-only tool for managing M12 Labs extensions on a panel install (check files, run a build, etc.).
 
 ---
 
-## Launcher (Linux)
+## Installer (Linux)
 
 ### Install
 
 Requirements: Linux, `python3`, `git`, `curl`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-Extensions/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/install.sh | sh
 ```
 
 This will:
 
-- clone/update the repo under `~/.local/share/m12extensions`
-- install a `m12extensions` command into `~/.local/bin`
+- clone/update the repo under `~/.local/share/m12labs-installer`
+- install a `m12labs-installer` command into `~/.local/bin`
 - add that bin dir to your shell `PATH` for future terminals
 
 After install, open a new terminal and run:
 
 ```bash
-m12extensions
+m12labs-installer
 ```
 
-On first run the launcher will ask for your panel path (for example `/var/www/m12labs`) and remember it in `launcher/config.toml`.
+On first run the installer will ask for your panel path (for example `/var/www/m12labs`) and remember it in `installer/config.toml`.
 
-### What the launcher does (current phase)
+### What the installer does (current phase)
 
 The menu is intentionally simple and mostly scaffolding:
 
@@ -41,12 +39,12 @@ Other menu options (Install / Uninstall / Update) are placeholders for future re
 
 ### Uninstall
 
-To remove the launcher using a script (similar to the installation process), run:
+To remove the installer using a script (similar to the installation process), run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-Extensions/main/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/uninstall.sh | sh
 ```
 
-This command will delete the launcher and all associated data from your home directory.
+This command will delete the installer and all associated data from your home directory.
 
 ---

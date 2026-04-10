@@ -1,7 +1,7 @@
-"""Backup and restore helpers for the M12 Labs launcher.
+"""Backup and restore helpers for the M12 Labs installer.
 
 Creates and restores ``.tar.gz`` archives of the full panel install directory.
-Archives are stored in ``launcher/backups/`` with timestamped filenames so they
+Archives are stored in ``installer/backups/`` with timestamped filenames so they
 never overwrite each other.
 
 Usage::
@@ -59,7 +59,7 @@ def _human_size(size_bytes: int) -> str:
 
 
 def default_backups_dir() -> Path:
-    """Return the default backups directory path (``launcher/backups/``)."""
+    """Return the default backups directory path (``installer/backups/``)."""
     return _DEFAULT_BACKUPS_DIR
 
 
@@ -69,7 +69,7 @@ def create_backup(install_path: Path, backups_dir: Path | None = None) -> Path:
     Args:
         install_path: Root directory of the panel installation to back up.
         backups_dir:  Directory in which to save the archive.  Defaults to
-                      ``launcher/backups/``.
+                      ``installer/backups/``.
 
     Returns:
         Path to the newly created archive file.
@@ -104,7 +104,7 @@ def list_backups(backups_dir: Path | None = None) -> list[BackupEntry]:
     """Return metadata for all backup archives in *backups_dir*, newest first.
 
     Args:
-        backups_dir: Directory to scan.  Defaults to ``launcher/backups/``.
+        backups_dir: Directory to scan.  Defaults to ``installer/backups/``.
 
     Returns:
         List of :class:`BackupEntry` dicts sorted by modification time

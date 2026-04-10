@@ -1,21 +1,21 @@
 #!/bin/sh
-# install.sh — Install or update the M12 Labs extension launcher.
+# install.sh — Install or update the M12 Labs installer.
 #
 # Recommended usage (two-step, allows you to review the script before running):
-#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-Extensions/main/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/install.sh -o install.sh
 #   sh install.sh
 #
 # One-liner (pipe to sh) — only use this if you trust the source:
-#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-Extensions/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/install.sh | sh
 #
 # Rerunning this script updates an existing installation.
 # Requires: git, python3
 
 set -eu
 
-REPO_URL="https://github.com/macery12/M12Labs-Extensions.git"
+REPO_URL="https://github.com/macery12/M12Labs-installer.git"
 REPO_BRANCH="main"
-COMMAND_NAME="m12extensions"
+COMMAND_NAME="m12labs-installer"
 
 # Honour XDG base-dir spec; fall back to ~/.local/{share,bin}.
 INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$COMMAND_NAME"
@@ -76,7 +76,7 @@ ensure_bin_dir_persisted() {
 
     # Only append if the exact line is not already present.
     if ! grep -Fqx "$path_line" "$profile_file"; then
-        printf '\n# Added by M12 Labs Extension Launcher installer\n%s\n' "$path_line" >> "$profile_file"
+        printf '\n# Added by M12 Labs Installer\n%s\n' "$path_line" >> "$profile_file"
         log "Updated shell profile: $profile_file"
     fi
 }
@@ -85,8 +85,8 @@ ensure_bin_dir_persisted() {
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 
-printf '\nM12 Labs Extension Launcher — Installer\n'
-printf '========================================\n\n'
+printf '\nM12 Labs Installer\n'
+printf '==================\n\n'
 
 have git     || die "git is required but not found. Please install git and try again."
 have python3 || die "python3 is required but not found. Please install python3 and try again."
@@ -117,12 +117,12 @@ fi
 # Write the command wrapper
 # ---------------------------------------------------------------------------
 
-# Running  python3 /path/to/launcher/main.py  works because Python adds the
-# script's parent directory (launcher/) to sys.path automatically, which lets
-# the launcher's internal "from build import …" style imports resolve.
+# Running  python3 /path/to/installer/main.py  works because Python adds the
+# script's parent directory (installer/) to sys.path automatically, which lets
+# the installer's internal "from build import …" style imports resolve.
 cat > "$COMMAND_PATH" <<EOF
 #!/bin/sh
-exec python3 "$INSTALL_DIR/launcher/main.py" "\$@"
+exec python3 "$INSTALL_DIR/installer/main.py" "\$@"
 EOF
 
 chmod +x "$COMMAND_PATH"
