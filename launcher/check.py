@@ -36,10 +36,16 @@ RELEASE_MANIFEST_URL = (
 )
 MANIFEST_TIMEOUT = 10  # seconds
 
-# Strict semver-like pattern accepted for release manifest URL construction.
-# Only versions matching X.Y.Z (all numeric, each component ≤ 5 digits) are
-# allowed to prevent SSRF via a manipulated config/app.php version string.
-_VERSION_RE = re.compile(r"^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$")
+# Safe release-tag pattern accepted for remote manifest URL construction.
+# Allows semantic versions like X.Y.Z plus optional prerelease/build suffixes
+# such as ``2.0.0-m12-rc2.6`` while still rejecting slashes and other URL-
+# significant characters that could be abused via a manipulated config/app.php
+# version string.
+_VERSION_RE = re.compile(
+    r"^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}"
+    r"(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?"
+    r"(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$"
+)
 
 # Directories/files scanned when looking for extra (untracked) files.
 # Add new entries here to widen the scope of the extra-file search.
@@ -202,9 +208,9 @@ def load_manifest(install_root: Path) -> tuple[dict | None, str]:
         print("  Remote manifest unavailable – falling back to local manifest")
         _logger.debug("Remote manifest unavailable – falling back to local manifest")
     elif version:
-        # Version string exists but did not match the strict X.Y.Z pattern.
-        print(f"  Version string {version!r} is not a valid X.Y.Z release – skipping remote manifest")
-        _logger.debug("Version string %r is not a valid X.Y.Z release – skipping remote manifest", version)
+        # Version string exists but did not match the allowed release-tag pattern.
+        print(f"  Version string {version!r} is not a supported release tag – skipping remote manifest")
+        _logger.debug("Version string %r is not a supported release tag – skipping remote manifest", version)
     else:
         print("  No version found in config/app.php – skipping remote manifest")
         _logger.debug("No version found in config/app.php – skipping remote manifest")
