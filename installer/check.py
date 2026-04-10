@@ -1,4 +1,4 @@
-"""Read-only panel installation validator for the M12 Labs launcher.
+"""Read-only panel installation validator for the M12 Labs installer.
 
 Validates installed panel files against a SHA-256 hash manifest.  The
 manifest is resolved in priority order:

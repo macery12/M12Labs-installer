@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux-first M12 Labs extension manager launcher."""
+"""Linux-first M12 Labs extension installer."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def wait_for_enter() -> None:
 
 def ensure_linux() -> bool:
     if platform.system().lower() != "linux":
-        print("This launcher currently supports Linux only.")
+        print("This installer currently supports Linux only.")
         return False
     return True
 
@@ -343,7 +343,7 @@ def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
     else:
         logger.info("Restore complete. Archive: %s", selected["filename"])
         print("✓ Restore complete.")
-        print("  Restart the launcher to pick up any configuration changes from the restored backup.")
+        print("  Restart the installer to pick up any configuration changes from the restored backup.")
     wait_for_enter()
 
 
@@ -396,7 +396,7 @@ def config_menu(cfg: Config) -> Config:
 
 
 def _print_startup_summary(cfg: Config) -> None:
-    """Print a concise status summary when the launcher starts."""
+    """Print a concise status summary when the installer starts."""
     from backup import default_backups_dir, list_backups
 
     backups_dir = default_backups_dir()
@@ -430,12 +430,12 @@ def main() -> int:
     cfg = ensure_install_path(cfg)
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
-    logger.info("Launcher started. Panel path: %s", cfg.install_path)
+    logger.info("Installer started. Panel path: %s", cfg.install_path)
     installed_extensions: list[str] = []
 
     while True:
         clear_screen()
-        print("M12 Labs Linux Extension Manager\n")
+        print("M12 Labs Installer\n")
         _print_startup_summary(cfg)
         print("1. Install")
         print("2. Uninstall")
@@ -469,7 +469,7 @@ def main() -> int:
             logger.debug("Menu: Config")
             cfg = config_menu(cfg)
         elif choice == "0":
-            logger.info("Launcher exiting.")
+            logger.info("Installer exiting.")
             print("Goodbye.")
             return 0
         else:
