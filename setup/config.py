@@ -178,7 +178,7 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
     # Persist name + user to disk.  Password is intentionally NOT saved.
     save_config(cfg)
     _logger.info(
-        "DB config set: db_name=%s, db_user=%s (password held in memory only)",
+        "DB config set: db_name=%s, db_user=%s (password not logged)",
         cfg.db_name,
         cfg.db_user,
     )

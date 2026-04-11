@@ -102,8 +102,7 @@ def configure_laravel(
         if env_example.exists():
             print("  Copying .env.example → .env…")
             try:
-                import shutil as _shutil
-                _shutil.copy2(str(env_example), str(env_path))
+                shutil.copy2(str(env_example), str(env_path))
             except OSError as exc:
                 print(f"  ERROR: could not copy .env.example: {exc}")
                 logger.error("Failed to copy .env.example: %s", exc)

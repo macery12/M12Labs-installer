@@ -72,15 +72,17 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     print("\n[3/5] Setting up database…")
 
     # --- Input validation ---
-    for value, label, validator in [
-        (db_name, "DB name", _validate_identifier),
-        (db_user, "DB user", _validate_user),
-    ]:
-        error = validator(value, label) if label == "DB name" else validator(value)
-        if error:
-            print(f"  ERROR: {error}")
-            logger.error("Database setup validation failed: %s", error)
-            return False
+    name_error = _validate_identifier(db_name, "DB name")
+    if name_error:
+        print(f"  ERROR: {name_error}")
+        logger.error("Database setup validation failed: %s", name_error)
+        return False
+
+    user_error = _validate_user(db_user)
+    if user_error:
+        print(f"  ERROR: {user_error}")
+        logger.error("Database setup validation failed: %s", user_error)
+        return False
 
     if not db_pass:
         print("  ERROR: DB password must not be empty.")
@@ -106,12 +108,14 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
 
     print(f"  Creating database '{db_name}' and user '{db_user}'…")
     # Pass SQL via stdin; the password never appears in the argument list.
+    # capture_output=True prevents MySQL error messages from accidentally
+    # echoing sensitive SQL (which contains the password) to the terminal.
     try:
         result = subprocess.run(
             ["mysql", "-u", "root"],
             input=sql.encode(),
             check=False,
-            capture_output=False,
+            capture_output=True,
         )
     except FileNotFoundError:
         print("  ERROR: mysql command not found.")
@@ -122,6 +126,9 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
         print("  ERROR: MySQL command failed. Check that MariaDB is running")
         print("         and that the root user can connect without a password,")
         print("         or re-run with `sudo`.")
+        # Print stderr (which never contains the password) to help diagnose.
+        if result.stderr:
+            print(result.stderr.decode(errors="replace").strip())
         logger.error("mysql command exited with code %d", result.returncode)
         return False
 

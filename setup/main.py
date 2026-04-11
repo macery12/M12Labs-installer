@@ -134,7 +134,7 @@ def full_install() -> int:
 
     print()
     print("Starting installation.  This will take several minutes.")
-    print("You will be prompted to answer artisan questions during Steps 4.")
+    print("You will be prompted to answer artisan questions during Step 4.")
     print()
 
     install_path: Path = cfg.install_path
