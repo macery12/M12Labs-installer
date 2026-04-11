@@ -49,7 +49,7 @@ printf '  ║        M12Labs Panel – Setup Bootstrap       ║\n'
 printf '  ╚══════════════════════════════════════════════╝\n'
 printf '\n'
 info "Repository : $REPO_URL"
-info "Install to : $INSTALL_DIR"
+info "Installer Directory : $INSTALL_DIR"
 printf '\n'
 
 # ---------------------------------------------------------------------------
@@ -74,9 +74,9 @@ done
 
 if [ "$_CONFIRMED" -eq 0 ]; then
     printf '  This script will:\n'
-    printf '    • Clone or update the M12Labs-installer repository into %s\n' "$INSTALL_DIR"
+    printf '    • Clone or update the M12Labs-installer repository into a folder of choice\n'
     printf '    • Install system packages (apt)\n'
-    printf '    • Create /var/www/m12labs\n'
+    printf '    • Create folder locations\n'
     printf '    • Configure cron and systemd services\n'
     printf '\n'
     printf '  Root / sudo privileges are required for the above steps.\n'
