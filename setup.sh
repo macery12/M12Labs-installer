@@ -4,7 +4,16 @@
 # Run from anywhere:
 #   bash setup.sh
 #   sudo bash setup.sh
-#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/setup.sh | sudo bash
+#
+# Recommended one-liner (interactive – keeps stdin as your terminal):
+#   bash <(curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/setup.sh)
+#
+# Non-interactive / automated (skip the confirmation prompt):
+#   curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/setup.sh | sudo bash -s -- -y
+#
+# Flags:
+#   -y / --yes        Skip the confirmation prompt (auto-proceed)
+#   --confirmed       Internal flag used by the sudo re-exec path
 #
 # What this script does:
 #   1. Verifies required tools (git, python3) are available.
@@ -51,14 +60,16 @@ have git     || die "git is required but not found.  Install git and re-run."
 have python3 || die "python3 is required but not found.  Install Python 3.10+ and re-run."
 
 # ---------------------------------------------------------------------------
-# Confirmation prompt (skipped when re-executing under sudo)
+# Parse flags   (-y/--yes skips the prompt; --confirmed is for internal re-exec)
 # ---------------------------------------------------------------------------
 
-# When the script re-execs with sudo it passes --confirmed so the user is not
-# asked twice (once for the unprivileged run and once for the sudo run).
 _CONFIRMED=0
+_YES=0
 for _arg in "$@"; do
-    [ "$_arg" = "--confirmed" ] && _CONFIRMED=1 && break
+    case "$_arg" in
+        --confirmed) _CONFIRMED=1 ;;
+        -y|--yes)    _YES=1; _CONFIRMED=1 ;;
+    esac
 done
 
 if [ "$_CONFIRMED" -eq 0 ]; then
@@ -71,9 +82,21 @@ if [ "$_CONFIRMED" -eq 0 ]; then
     printf '  Root / sudo privileges are required for the above steps.\n'
     printf '\n'
 
-    # Read from /dev/tty so the prompt works even when stdin is a pipe
-    # (e.g. curl … | sudo bash).
-    read -r -p "  Proceed? [y/N] " _confirm </dev/tty
+    # Prefer /dev/tty so the prompt works even when stdin is a pipe
+    # (e.g. curl … | sudo bash).  Fall back gracefully when no TTY exists.
+    if [ -c /dev/tty ]; then
+        printf '  Proceed? [y/N] ' >/dev/tty
+        read -r _confirm </dev/tty
+    else
+        printf '  No controlling terminal detected.\n'
+        printf '  To run non-interactively, pass the -y flag:\n'
+        printf '\n'
+        printf '    curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/setup.sh | sudo bash -s -- -y\n'
+        printf '\n'
+        printf 'Aborted.\n\n'
+        exit 1
+    fi
+
     case "$_confirm" in
         [yY]|[yY][eE][sS]) ;;
         *) printf '\nAborted.\n\n'; exit 0 ;;
@@ -87,8 +110,13 @@ fi
 
 if [ "$(id -u)" -ne 0 ]; then
     have sudo || die "You are not root and sudo is not available.  Re-run as root."
-    info "Re-executing with sudo..."
-    exec sudo bash "$0" --confirmed "$@"
+    # Only re-exec if $0 is a real file on disk (i.e. not a pipe/process-sub).
+    if [ -f "$0" ]; then
+        info "Re-executing with sudo..."
+        exec sudo bash "$0" --confirmed "$@"
+    else
+        die "Not running as root. Re-run with sudo, e.g.:\n\n  curl -fsSL https://raw.githubusercontent.com/macery12/M12Labs-installer/main/setup.sh | sudo bash -s -- -y"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
