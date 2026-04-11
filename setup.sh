@@ -74,9 +74,9 @@ done
 
 if [ "$_CONFIRMED" -eq 0 ]; then
     printf '  This script will:\n'
-    printf '    • Clone or update the M12Labs-installer repository into a folder of choice\n'
+    printf '    • Clone or update the M12Labs-installer repository into %s\n' "$INSTALL_DIR"
     printf '    • Install system packages (apt)\n'
-    printf '    • Create folder locations\n'
+    printf '    • Create panel directory\n'
     printf '    • Configure cron and systemd services\n'
     printf '\n'
     printf '  Root / sudo privileges are required for the above steps.\n'
