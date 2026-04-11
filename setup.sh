@@ -71,7 +71,9 @@ if [ "$_CONFIRMED" -eq 0 ]; then
     printf '  Root / sudo privileges are required for the above steps.\n'
     printf '\n'
 
-    read -r -p "  Proceed? [y/N] " _confirm
+    # Read from /dev/tty so the prompt works even when stdin is a pipe
+    # (e.g. curl … | sudo bash).
+    read -r -p "  Proceed? [y/N] " _confirm </dev/tty
     case "$_confirm" in
         [yY]|[yY][eE][sS]) ;;
         *) printf '\nAborted.\n\n'; exit 0 ;;
