@@ -46,14 +46,14 @@ def download_panel(
     logger.info("Step 2: Downloading panel from %s to %s", release_url, install_path)
     print("\n[2/5] Downloading panel files…")
 
-    # --- Create install directory ---
+    # Create install directory
     if not install_path.exists():
         print(f"  Creating install directory: {install_path}")
         logger.debug("Creating install directory: %s", install_path)
         try:
             install_path.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            # Fall back to privileged mkdir if permissions block us.
+            # Fall back to privileged mkdir if permissions block us
             logger.warning("mkdir failed (%s) – trying with privilege", exc)
             mkdir_cmd = with_privilege(["mkdir", "-p", str(install_path)])
             if not mkdir_cmd or not run_command_no_cwd(mkdir_cmd):
@@ -70,7 +70,7 @@ def download_panel(
 
     tarball_path = install_path / _TARBALL_NAME
 
-    # --- Download tarball ---
+    # Download tarball
     print(f"  Downloading {release_url} …")
     if not run_command(
         ["curl", "-Lo", str(tarball_path), release_url],
@@ -80,20 +80,20 @@ def download_panel(
         logger.error("curl download failed for %s", release_url)
         return False
 
-    # --- Extract ---
+    # Extract
     print("  Extracting panel archive…")
     if not run_command(["tar", "-xzf", str(tarball_path)], cwd=install_path):
         print("  ERROR: extraction failed.")
         logger.error("tar extraction failed for %s", tarball_path)
         return False
 
-    # Clean up tarball.
+    # Clean up tarball
     try:
         tarball_path.unlink()
     except OSError:
         logger.debug("Could not remove tarball %s – skipping", tarball_path)
 
-    # --- Permissions ---
+    # Permissions
     print("  Setting file permissions…")
     for rel_dir in ("storage", "bootstrap/cache"):
         target = install_path / rel_dir
@@ -102,7 +102,7 @@ def download_panel(
             if chmod_cmd:
                 run_command_no_cwd(chmod_cmd)
 
-    # --- Ownership ---
+    # Ownership
     print("  Setting ownership to www-data:www-data…")
     chown_cmd = with_privilege(
         ["chown", "-R", "www-data:www-data", str(install_path)]

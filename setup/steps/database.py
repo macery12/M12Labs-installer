@@ -71,7 +71,7 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     )
     print("\n[3/5] Setting up database…")
 
-    # --- Input validation ---
+    # Input validation
     name_error = _validate_identifier(db_name, "DB name")
     if name_error:
         print(f"  ERROR: {name_error}")
@@ -94,7 +94,7 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
         logger.error("mysql client not found")
         return False
 
-    # Escape single quotes in the password for safe use in SQL strings.
+    # Escape single quotes in the password for safe use in SQL strings
     escaped_pass = db_pass.replace("\\", "\\\\").replace("'", "\\'")
 
     sql = (
@@ -107,9 +107,7 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     )
 
     print(f"  Creating database '{db_name}' and user '{db_user}'…")
-    # Pass SQL via stdin; the password never appears in the argument list.
-    # capture_output=True prevents MySQL error messages from accidentally
-    # echoing sensitive SQL (which contains the password) to the terminal.
+    # Pass SQL via stdin so the password never appears in the argument list
     try:
         result = subprocess.run(
             ["mysql", "-u", "root"],
@@ -126,7 +124,7 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
         print("  ERROR: MySQL command failed. Check that MariaDB is running")
         print("         and that the root user can connect without a password,")
         print("         or re-run with `sudo`.")
-        # Print stderr (which never contains the password) to help diagnose.
+        # Print stderr to help diagnose (never contains the password)
         if result.stderr:
             print(result.stderr.decode(errors="replace").strip())
         logger.error("mysql command exited with code %d", result.returncode)

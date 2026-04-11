@@ -1,20 +1,4 @@
-"""Step 4 – Configure the Laravel environment, run migrations, create admin user.
-
-Translates the ``environment-setup.md`` documentation page:
-
-1. Copy ``.env.example`` → ``.env`` (if ``.env`` does not exist).
-2. Patch ``.env`` with DB_DATABASE, DB_USERNAME, DB_PASSWORD.
-3. Run ``composer install --no-dev --optimize-autoloader`` as www-data.
-4. ``php artisan key:generate --force``
-5. ``php artisan p:environment:setup``   (interactive – user answers prompts)
-6. ``php artisan p:environment:database``
-7. ``php artisan migrate --seed --force``
-8. ``php artisan p:user:make``           (interactive – user creates admin)
-9. Reset ownership to ``www-data:www-data``.
-
-The database password is consumed here (written to ``.env``) and is never
-persisted elsewhere by the installer.
-"""
+"""Step 4 – Configure the Laravel environment, run migrations, create admin user."""
 
 from __future__ import annotations
 
@@ -56,7 +40,7 @@ def _patch_env(env_path: Path, db_name: str, db_user: str, db_pass: str) -> None
         if pattern.search(text):
             text = pattern.sub(replacement, text)
         else:
-            # Key absent – append it.
+            # Key absent – append it
             text = text.rstrip("\n") + f"\n{key}={value}\n"
 
     env_path.write_text(text, encoding="utf-8")
@@ -97,7 +81,7 @@ def configure_laravel(
     env_path = install_path / ".env"
     env_example = install_path / ".env.example"
 
-    # --- Copy .env.example → .env ---
+    # Copy .env.example to .env
     if not env_path.exists():
         if env_example.exists():
             print("  Copying .env.example → .env…")
@@ -112,7 +96,7 @@ def configure_laravel(
             logger.warning(".env.example not found at %s", env_example)
             env_path.write_text("APP_ENV=production\n", encoding="utf-8")
 
-    # --- Patch .env with DB credentials ---
+    # Patch .env with DB credentials
     print("  Writing database credentials to .env…")
     logger.debug("Patching .env with DB_DATABASE=%s, DB_USERNAME=%s", db_name, db_user)
     try:
@@ -122,7 +106,7 @@ def configure_laravel(
         logger.error("Failed to patch .env: %s", exc)
         return False
 
-    # --- Composer install ---
+    # Composer install
     print("  Running composer install (this may take a few minutes)…")
     if not run_as_www_data(
         ["composer", "install", "--no-dev", "--optimize-autoloader"],
@@ -132,18 +116,15 @@ def configure_laravel(
         logger.error("composer install failed")
         return False
 
-    # --- Ensure www-data owns .env before artisan runs ---
-    # The file was written by the installer process (typically root); artisan
-    # runs as www-data and must be able to write to .env (e.g. key:generate).
+    # Ensure www-data owns .env so artisan key:generate can write to it
     chown_env_cmd = with_privilege(["chown", "www-data:www-data", str(env_path)])
     if chown_env_cmd:
         run_command_no_cwd(chown_env_cmd)
 
-    # --- Artisan commands ---
+    # Artisan commands
     artisan_steps = [
         (["key:generate", "--force"], "Generating application key…"),
         (["p:environment:setup"], "Running environment setup (answer prompts below)…"),
-        (["p:environment:database"], "Running database environment setup…"),
         (["migrate", "--seed", "--force"], "Running database migrations…"),
         (["p:user:make"], "Creating admin user (answer prompts below)…"),
     ]
@@ -155,7 +136,7 @@ def configure_laravel(
             logger.error("artisan %s failed", " ".join(args))
             return False
 
-    # --- Reset ownership ---
+    # Reset ownership to www-data
     print("  Resetting file ownership to www-data:www-data…")
     chown_cmd = with_privilege(
         ["chown", "-R", "www-data:www-data", str(install_path)]

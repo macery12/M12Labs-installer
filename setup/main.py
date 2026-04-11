@@ -33,23 +33,12 @@ import shutil
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Ensure the repo root is on sys.path so that ``setup.*`` imports work
-# regardless of the current working directory.  This makes the following
-# all equivalent:
-#
-#   python3 -m setup.main          (from repo root)
-#   python3 setup/main.py          (from repo root)
-#   python3 main.py                (from inside setup/)
-#   bash setup.sh                  (from anywhere)
-# ---------------------------------------------------------------------------
+# Ensure the repo root is on sys.path so that setup.* imports work
+# regardless of the current working directory.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# ---------------------------------------------------------------------------
-# Platform guard
-# ---------------------------------------------------------------------------
 
 def _ensure_linux() -> bool:
     if platform.system().lower() != "linux":
@@ -72,10 +61,6 @@ def _warn_if_not_privileged() -> None:
             "\nSome steps (package installation, systemd, chown) may fail."
         )
 
-
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
 
 def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None:
     """Print the post-install summary and NGINX / SSL reminders."""
@@ -106,10 +91,6 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
     print("─" * width)
 
 
-# ---------------------------------------------------------------------------
-# Main install flow
-# ---------------------------------------------------------------------------
-
 def full_install() -> int:
     """Run the complete interactive panel install walkthrough.
 
@@ -136,12 +117,12 @@ def full_install() -> int:
 
     _warn_if_not_privileged()
 
-    # --- Config & prompts ---
+    # Config and prompts
     cfg: InstallConfig = load_config()
     cfg = prompt_for_install_path(cfg)
     cfg, db_pass = prompt_for_db_config(cfg)
 
-    # --- Logging (after install_path is known) ---
+    # Logging (after install_path is known)
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
     logger.info(
@@ -158,25 +139,25 @@ def full_install() -> int:
 
     install_path: Path = cfg.install_path
 
-    # --- Step 1: System dependencies ---
+    # Step 1: System dependencies
     if not install_dependencies():
         logger.error("Install aborted: Step 1 (dependencies) failed")
         print("\n✗ Installation failed at Step 1. See output above.")
         return 1
 
-    # --- Step 2: Download panel files ---
+    # Step 2: Download panel files
     if not download_panel(install_path):
         logger.error("Install aborted: Step 2 (download) failed")
         print("\n✗ Installation failed at Step 2. See output above.")
         return 1
 
-    # --- Step 3: Database setup ---
+    # Step 3: Database setup
     if not setup_database(cfg.db_name, cfg.db_user, db_pass):
         logger.error("Install aborted: Step 3 (database) failed")
         print("\n✗ Installation failed at Step 3. See output above.")
         return 1
 
-    # --- Step 4: Laravel environment ---
+    # Step 4: Laravel environment
     if not configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
         logger.error("Install aborted: Step 4 (Laravel) failed")
         print("\n✗ Installation failed at Step 4. See output above.")
@@ -187,7 +168,7 @@ def full_install() -> int:
     # Overwrite the password in memory as soon as it is no longer needed.
     db_pass = ""
 
-    # --- Step 5: Cron + queue worker ---
+    # Step 5: Cron and queue worker
     if not configure_workers(install_path):
         logger.error("Install aborted: Step 5 (workers) failed")
         print("\n✗ Installation failed at Step 5. See output above.")

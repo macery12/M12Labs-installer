@@ -32,7 +32,7 @@ DEFAULT_INSTALL_PATH: Path = Path("/var/www/m12labs")
 DEFAULT_DB_NAME: str = "jexactyldb"
 DEFAULT_DB_USER: str = "jexactyluser"
 
-# Config file lives next to this source file so it stays with the installer.
+# Config file lives next to this source file so it stays with the installer
 _CONFIG_FILE = Path(__file__).parent / "config.toml"
 
 _logger = logging.getLogger("m12labs.setup")
@@ -175,7 +175,7 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
         print(f"  Generated password: {db_pass}")
         print("  (Save this now – it will not be shown again.)")
 
-    # Persist name + user to disk.  Password is intentionally NOT saved.
+    # Persist name and user to disk; password is intentionally NOT saved
     save_config(cfg)
     _logger.info(
         "DB config set: db_name=%s, db_user=%s (password not logged)",

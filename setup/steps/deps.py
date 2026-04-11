@@ -73,13 +73,13 @@ def install_dependencies() -> bool:
         logger.error("No supported package manager found")
         return False
 
-    # --- Base tools ---
+    # Base tools
     print("  Installing base tools…")
     if not install_packages(_BASE_PACKAGES):
         logger.error("Failed to install base packages")
         return False
 
-    # --- PHP PPA (apt-get / Ubuntu/Debian only) ---
+    # PHP PPA (Ubuntu/Debian only)
     if pm == "apt-get":
         print("  Adding ondrej/php PPA…")
         add_repo_cmd = with_privilege(
@@ -91,19 +91,19 @@ def install_dependencies() -> bool:
                 logger.warning("add-apt-repository failed; continuing without PPA")
                 print("  Warning: could not add ondrej/php PPA – continuing anyway.")
 
-        # Update package lists after adding PPA.
+        # Update package lists after adding PPA
         update_cmd = with_privilege(["apt-get", "update"])
         if update_cmd and not run_command_no_cwd(update_cmd):
             logger.error("apt-get update failed after adding PPA")
             return False
 
-    # --- PHP 8.3 + system packages ---
+    # PHP 8.3 and system packages
     print("  Installing PHP 8.3 and system packages…")
     if not install_packages(_PHP_PACKAGES + _SYSTEM_PACKAGES):
         logger.error("Failed to install PHP/system packages")
         return False
 
-    # --- Composer ---
+    # Composer
     if not _ensure_composer():
         logger.error("Failed to install Composer")
         return False
@@ -127,7 +127,7 @@ def _ensure_composer() -> bool:
         print("  ERROR: php is required to install Composer.")
         return False
 
-    # Download installer to a temp file and run it.
+    # Download installer to a temp file and run it
     download_ok = run_command_no_cwd(
         ["curl", "-sS", "-o", "/tmp/composer-setup.php", _COMPOSER_INSTALLER_URL]
     )

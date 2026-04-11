@@ -74,7 +74,7 @@ def _install_cron(artisan_bin: str) -> bool:
 
     print("  Checking crontab for www-data…")
 
-    # Read current crontab for www-data; empty string if none set yet.
+    # Read current crontab for www-data; empty string if none set yet
     try:
         result = subprocess.run(
             ["crontab", "-u", "www-data", "-l"],
@@ -110,7 +110,7 @@ def _install_cron(artisan_bin: str) -> bool:
     if proc.returncode != 0:
         print("  WARNING: could not update crontab – continuing.")
         logger.warning("crontab update failed (exit %d)", proc.returncode)
-        # Non-fatal; the user can add it manually.
+        # Non-fatal; the user can add it manually
     else:
         logger.debug("Cron entry added for www-data")
 
@@ -125,7 +125,7 @@ def _install_systemd_service(artisan_bin: str) -> bool:
 
     print(f"  Writing systemd unit: {unit_path}…")
 
-    # Write the unit file, using privilege escalation if required.
+    # Write the unit file using privilege escalation if required
     write_cmd = with_privilege(
         ["tee", str(unit_path)]
     )
@@ -142,7 +142,7 @@ def _install_systemd_service(artisan_bin: str) -> bool:
                 logger.error("tee to %s failed (exit %d)", unit_path, proc.returncode)
                 return False
         except FileNotFoundError:
-            # Fall back to direct write if tee is unavailable.
+            # Fall back to direct write if tee is unavailable
             try:
                 unit_path.write_text(unit_content, encoding="utf-8")
             except PermissionError as exc:
@@ -150,7 +150,7 @@ def _install_systemd_service(artisan_bin: str) -> bool:
                 logger.error("Permission denied writing %s: %s", unit_path, exc)
                 return False
     else:
-        # No sudo available; attempt direct write.
+        # No sudo available; attempt direct write
         try:
             unit_path.write_text(unit_content, encoding="utf-8")
         except PermissionError as exc:
@@ -158,7 +158,7 @@ def _install_systemd_service(artisan_bin: str) -> bool:
             logger.error("Permission denied writing %s: %s", unit_path, exc)
             return False
 
-    # Reload daemon and enable the service.
+    # Reload daemon and enable the service
     reload_cmd = with_privilege(["systemctl", "daemon-reload"])
     enable_cmd = with_privilege(["systemctl", "enable", "--now", _SERVICE_NAME])
 
