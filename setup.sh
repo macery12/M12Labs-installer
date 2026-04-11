@@ -51,24 +51,33 @@ have git     || die "git is required but not found.  Install git and re-run."
 have python3 || die "python3 is required but not found.  Install Python 3.10+ and re-run."
 
 # ---------------------------------------------------------------------------
-# Confirmation prompt
+# Confirmation prompt (skipped when re-executing under sudo)
 # ---------------------------------------------------------------------------
 
-printf '  This script will:\n'
-printf '    • Clone or update the M12Labs-installer repository into %s\n' "$INSTALL_DIR"
-printf '    • Install system packages (apt)\n'
-printf '    • Create /var/www/m12labs\n'
-printf '    • Configure cron and systemd services\n'
-printf '\n'
-printf '  Root / sudo privileges are required for the above steps.\n'
-printf '\n'
+# When the script re-execs with sudo it passes --confirmed so the user is not
+# asked twice (once for the unprivileged run and once for the sudo run).
+_CONFIRMED=0
+for _arg in "$@"; do
+    [ "$_arg" = "--confirmed" ] && _CONFIRMED=1 && break
+done
 
-read -r -p "  Proceed? [y/N] " _confirm
-case "$_confirm" in
-    [yY]|[yY][eE][sS]) ;;
-    *) printf '\nAborted.\n\n'; exit 0 ;;
-esac
-printf '\n'
+if [ "$_CONFIRMED" -eq 0 ]; then
+    printf '  This script will:\n'
+    printf '    • Clone or update the M12Labs-installer repository into %s\n' "$INSTALL_DIR"
+    printf '    • Install system packages (apt)\n'
+    printf '    • Create /var/www/m12labs\n'
+    printf '    • Configure cron and systemd services\n'
+    printf '\n'
+    printf '  Root / sudo privileges are required for the above steps.\n'
+    printf '\n'
+
+    read -r -p "  Proceed? [y/N] " _confirm
+    case "$_confirm" in
+        [yY]|[yY][eE][sS]) ;;
+        *) printf '\nAborted.\n\n'; exit 0 ;;
+    esac
+    printf '\n'
+fi
 
 # ---------------------------------------------------------------------------
 # Re-exec with sudo if not root
@@ -77,7 +86,7 @@ printf '\n'
 if [ "$(id -u)" -ne 0 ]; then
     have sudo || die "You are not root and sudo is not available.  Re-run as root."
     info "Re-executing with sudo..."
-    exec sudo bash "$0" "$@"
+    exec sudo bash "$0" --confirmed "$@"
 fi
 
 # ---------------------------------------------------------------------------
@@ -86,6 +95,10 @@ fi
 
 if [ -d "$INSTALL_DIR/.git" ]; then
     info "Existing installation found — pulling latest $REPO_BRANCH ..."
+    # Warn if the directory has local modifications that will be overwritten.
+    if ! git -C "$INSTALL_DIR" diff --quiet HEAD 2>/dev/null; then
+        warn "Local modifications detected in $INSTALL_DIR — they will be overwritten."
+    fi
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
     git -C "$INSTALL_DIR" reset --hard "origin/$REPO_BRANCH"
     ok "Repository updated."
