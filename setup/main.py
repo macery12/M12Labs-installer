@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """M12Labs panel setup – interactive full-install walkthrough.
 
-Run from the repository root with::
+Can be invoked in any of these ways::
 
+    # From the repo root:
     python3 -m setup.main
+    python3 setup/main.py
+    bash setup.sh
+
+    # From inside the setup/ directory:
+    python3 main.py
 
 The installer will:
   1. Verify the platform is Linux.
@@ -27,6 +33,19 @@ import shutil
 import sys
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Ensure the repo root is on sys.path so that ``setup.*`` imports work
+# regardless of the current working directory.  This makes the following
+# all equivalent:
+#
+#   python3 -m setup.main          (from repo root)
+#   python3 setup/main.py          (from repo root)
+#   python3 main.py                (from inside setup/)
+#   bash setup.sh                  (from anywhere)
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # ---------------------------------------------------------------------------
 # Platform guard
