@@ -132,6 +132,13 @@ def configure_laravel(
         logger.error("composer install failed")
         return False
 
+    # --- Ensure www-data owns .env before artisan runs ---
+    # The file was written by the installer process (typically root); artisan
+    # runs as www-data and must be able to write to .env (e.g. key:generate).
+    chown_env_cmd = with_privilege(["chown", "www-data:www-data", str(env_path)])
+    if chown_env_cmd:
+        run_command_no_cwd(chown_env_cmd)
+
     # --- Artisan commands ---
     artisan_steps = [
         (["key:generate", "--force"], "Generating application key…"),
