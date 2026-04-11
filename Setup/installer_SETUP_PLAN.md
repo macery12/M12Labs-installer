@@ -1,4 +1,9 @@
-# M12Labs Panel Setup Module – Plan
+# M12Labs Panel Setup Module – Plan (superseded)
+
+> **Note:** This file is the original draft.  The authoritative plan and full
+> implementation now live in `setup/installer_SETUP_PLAN.md` (lowercase `setup/`).
+
+---
 
 Goal: In the M12Labs **panel** project, create a new `setup/` folder that provides a Linux-only, Python-driven installer for the panel. This setup code should *follow the same architectural style* as this repo’s existing installer modules, but live in a separate `setup/` namespace that we can later copy or vendor into the panel repo.
 
