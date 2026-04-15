@@ -18,10 +18,8 @@ _PAGE_SIZE = 10
 
 # Sentinel tag used to represent the develop branch install source.
 DEVELOP_BRANCH_TAG = "develop"
-# Direct GitHub archive for the develop branch (always unbuilt source).
-DEVELOP_BRANCH_URL = (
-    "https://github.com/macery12/M12Labs/archive/refs/heads/develop.tar.gz"
-)
+# Git repository URL – cloned directly (default branch is develop).
+DEVELOP_REPO_GIT_URL = "https://github.com/macery12/M12Labs.git"
 
 
 @dataclass

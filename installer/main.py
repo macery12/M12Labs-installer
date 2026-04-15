@@ -34,7 +34,7 @@ from config import Config, ensure_install_path, load_config, prompt_for_install_
 from log import get_logger, setup_logging
 from releases import (
     DEVELOP_BRANCH_TAG,
-    DEVELOP_BRANCH_URL,
+    DEVELOP_REPO_GIT_URL,
     Release,
     download_archive,
     extract_archive,
@@ -116,9 +116,9 @@ def select_release_menu(cfg: Config) -> Config:
 
     cfg.selected_release = selected.tag
     if selected.tag == DEVELOP_BRANCH_TAG:
-        cfg.selected_release_url = DEVELOP_BRANCH_URL
+        cfg.selected_release_url = ""
         save_config(cfg)
-        print("\n✓ Develop branch selected – will build from source during install.")
+        print("\n✓ Develop branch selected – will git clone and build from source during install.")
     else:
         cfg.selected_release_url = get_archive_url(selected)
         save_config(cfg)
@@ -198,17 +198,28 @@ def _print_install_summary(install_path: Path, db_name: str, db_user: str) -> No
 
 
 def install_menu(cfg: Config) -> Config:
-    """Full install: download → extract → copy → deps → [build] → DB → Laravel → workers.
+    """Full install flow.
 
-    The pnpm build step is only run when the source is the develop branch.
-    Release archives (tar.gz / zip) are pre-built and skip that step.
+    * **Release** (tar.gz / zip from GitHub releases): download → extract/copy →
+      system deps → DB → Laravel → workers  (6 steps, no build – already built)
+    * **Develop branch**: git clone → system deps → build → DB → Laravel → workers
+      (6 steps, pnpm build always required for unbuilt source)
     """
     logger = get_logger()
     clear_screen()
     print("Install M12 Labs\n")
 
-    if not cfg.selected_release or not cfg.selected_release_url:
+    if not cfg.selected_release:
         print("No release selected.")
+        print("Go to Config → Change release version to choose one first.")
+        wait_for_enter()
+        return cfg
+
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+
+    # Release installs need a resolved archive URL.
+    if not is_develop and not cfg.selected_release_url:
+        print("No release URL configured.")
         print("Go to Config → Change release version to choose one first.")
         wait_for_enter()
         return cfg
@@ -218,20 +229,20 @@ def install_menu(cfg: Config) -> Config:
         wait_for_enter()
         return cfg
 
-    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
-    total_steps = 6 if is_develop else 5
-
-    archive_url = cfg.selected_release_url
-    filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.tar.gz"
-    dest_dir = cfg.install_path.parent / "m12labs-downloads"
+    total_steps = 6
 
     if is_develop:
-        print("  Source:   develop branch (will build from source)")
+        print(f"  Source:   develop branch (git clone from {DEVELOP_REPO_GIT_URL})")
+        print(f"  Install:  {cfg.install_path}/")
+        print("  Note:     frontend assets will be built from source\n")
     else:
+        archive_url = cfg.selected_release_url
+        filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.tar.gz"
+        dest_dir = cfg.install_path.parent / "m12labs-downloads"
         print(f"  Release:  {cfg.selected_release}")
-    print(f"  Archive:  {filename}")
-    print(f"  Save to:  {dest_dir}/")
-    print(f"  Install:  {cfg.install_path}/\n")
+        print(f"  Archive:  {filename}")
+        print(f"  Save to:  {dest_dir}/")
+        print(f"  Install:  {cfg.install_path}/\n")
 
     confirm = input("Proceed with full installation? [y/N]: ").strip().lower()
     if confirm != "y":
@@ -250,47 +261,79 @@ def install_menu(cfg: Config) -> Config:
         step += 1
         return f"\n[{step}/{total_steps}] {label}"
 
-    # --- Download ---
-    print(next_step("Downloading archive…"))
-    try:
-        dest_path = download_archive(archive_url, dest_dir, filename)
-        logger.info("Install: archive downloaded to %s", dest_path)
-        print(f"✓ Downloaded: {dest_path}")
-    except (urllib.error.URLError, OSError) as exc:
-        logger.error("Install: download failed: %s", exc)
-        print(f"\n✗ Download failed: {exc}")
-        db_pass = ""
-        wait_for_enter()
-        return cfg
-
-    # --- Extract & Copy ---
-    print(next_step("Extracting and copying files…"))
-    tmp_dir = Path(tempfile.mkdtemp(prefix="m12labs-extract-"))
-    try:
-        try:
-            extracted_root = extract_archive(dest_path, tmp_dir)
-            logger.info("Install: extracted to %s", extracted_root)
-            print(f"✓ Extracted: {extracted_root.name}")
-        except (ValueError, OSError) as exc:
-            logger.error("Install: extraction failed: %s", exc)
-            print(f"\n✗ Extraction failed: {exc}")
-            db_pass = ""
-            wait_for_enter()
-            return cfg
-
+    if is_develop:
+        # --- Git clone ---
+        print(next_step("Cloning develop branch…"))
+        logger.info("Install: git clone %s -> %s", DEVELOP_REPO_GIT_URL, cfg.install_path)
         cfg.install_path.mkdir(parents=True, exist_ok=True)
         try:
-            shutil.copytree(str(extracted_root), str(cfg.install_path), dirs_exist_ok=True)
-            logger.info("Install: files copied to %s", cfg.install_path)
-            print(f"✓ Files copied to {cfg.install_path}")
-        except (OSError, shutil.Error) as exc:
-            logger.error("Install: copy failed: %s", exc)
-            print(f"\n✗ Copy failed: {exc}")
+            result = subprocess.run(
+                [
+                    "git", "clone", "--depth", "1",
+                    "--branch", "develop",
+                    DEVELOP_REPO_GIT_URL,
+                    str(cfg.install_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise OSError(result.stderr.strip() or "git clone failed")
+            logger.info("Install: git clone complete")
+            print(f"✓ Cloned develop branch to {cfg.install_path}")
+        except (OSError, FileNotFoundError) as exc:
+            logger.error("Install: git clone failed: %s", exc)
+            print(f"\n✗ Git clone failed: {exc}")
             db_pass = ""
             wait_for_enter()
             return cfg
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    else:
+        archive_url = cfg.selected_release_url
+        filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.tar.gz"
+        dest_dir = cfg.install_path.parent / "m12labs-downloads"
+
+        # --- Download ---
+        print(next_step("Downloading release archive…"))
+        try:
+            dest_path = download_archive(archive_url, dest_dir, filename)
+            logger.info("Install: archive downloaded to %s", dest_path)
+            print(f"✓ Downloaded: {dest_path}")
+        except (urllib.error.URLError, OSError) as exc:
+            logger.error("Install: download failed: %s", exc)
+            print(f"\n✗ Download failed: {exc}")
+            db_pass = ""
+            wait_for_enter()
+            return cfg
+
+        # --- Extract & Copy ---
+        print(next_step("Extracting and copying files…"))
+        tmp_dir = Path(tempfile.mkdtemp(prefix="m12labs-extract-"))
+        try:
+            try:
+                extracted_root = extract_archive(dest_path, tmp_dir)
+                logger.info("Install: extracted to %s", extracted_root)
+                print(f"✓ Extracted: {extracted_root.name}")
+            except (ValueError, OSError) as exc:
+                logger.error("Install: extraction failed: %s", exc)
+                print(f"\n✗ Extraction failed: {exc}")
+                db_pass = ""
+                wait_for_enter()
+                return cfg
+
+            cfg.install_path.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copytree(str(extracted_root), str(cfg.install_path), dirs_exist_ok=True)
+                logger.info("Install: files copied to %s", cfg.install_path)
+                print(f"✓ Files copied to {cfg.install_path}")
+            except (OSError, shutil.Error) as exc:
+                logger.error("Install: copy failed: %s", exc)
+                print(f"\n✗ Copy failed: {exc}")
+                db_pass = ""
+                wait_for_enter()
+                return cfg
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # Set permissions before running any commands against the install_path.
     print("  Setting file permissions…")
@@ -309,7 +352,7 @@ def install_menu(cfg: Config) -> Config:
 
     # --- Frontend build (develop branch only – releases are pre-built) ---
     if is_develop:
-        print(next_step("Building frontend assets (develop branch)…"))
+        print(next_step("Building frontend assets…"))
         logger.info("Install: starting pnpm build for %s", cfg.install_path)
         run_build_only(cfg.install_path)
 
