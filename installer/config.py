@@ -33,6 +33,7 @@ _logger = logging.getLogger("m12labs")
 class Config:
     install_path: Path | None = None
     selected_release: str = ""
+    selected_release_url: str = ""
     show_detailed_checks: bool = False
     build_on_update: bool = True
     build_on_uninstall: bool = True
@@ -52,6 +53,7 @@ def load_config() -> Config:
     cfg = Config(
         install_path=Path(install_path_str) if install_path_str else None,
         selected_release=data.get("selected_release", "").strip(),
+        selected_release_url=data.get("selected_release_url", "").strip(),
         show_detailed_checks=bool(data.get("show_detailed_checks", False)),
         build_on_update=bool(data.get("build_on_update", False)),
         build_on_uninstall=bool(data.get("build_on_uninstall", False)),
@@ -82,6 +84,7 @@ def save_config(config: Config) -> None:
     lines = [
         f'install_path = "{install_path_value}"',
         f'selected_release = "{config.selected_release}"',
+        f'selected_release_url = "{config.selected_release_url}"',
         f"show_detailed_checks = {str(config.show_detailed_checks).lower()}",
         f"build_on_update = {str(config.build_on_update).lower()}",
         f"build_on_uninstall = {str(config.build_on_uninstall).lower()}",

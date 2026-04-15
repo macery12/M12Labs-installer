@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import tarfile
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -176,3 +178,41 @@ def download_archive(url: str, dest_dir: Path, filename: str) -> Path:
     print()  # newline after progress line
     _logger.info("Download complete: %s (%d bytes)", dest_path, downloaded)
     return dest_path
+
+
+# ---------------------------------------------------------------------------
+# Extraction
+# ---------------------------------------------------------------------------
+
+def extract_archive(archive_path: Path, dest_dir: Path) -> Path:
+    """Extract a ``.zip`` or ``.tar.gz`` archive into *dest_dir*.
+
+    Returns the path to the top-level content directory inside the archive
+    (GitHub source archives always contain a single top-level folder).  If
+    the archive has no single top-level directory, *dest_dir* itself is
+    returned.
+
+    Raises ``ValueError`` for unrecognised formats, ``OSError`` / ``tarfile``
+    / ``zipfile`` exceptions on corrupt archives.
+    """
+    name = archive_path.name
+    _logger.info("Extracting %s -> %s", archive_path, dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if name.endswith(".tar.gz") or name.endswith(".tgz"):
+        with tarfile.open(archive_path, "r:gz") as tf:
+            tf.extractall(dest_dir)
+    elif name.endswith(".zip") or zipfile.is_zipfile(archive_path):
+        with zipfile.ZipFile(archive_path) as zf:
+            zf.extractall(dest_dir)
+    else:
+        raise ValueError(f"Unrecognised archive format: {name!r}")
+
+    # GitHub archives always extract to a single top-level directory.
+    entries = [p for p in dest_dir.iterdir() if p.is_dir()]
+    if len(entries) == 1:
+        _logger.debug("Extracted top-level directory: %s", entries[0])
+        return entries[0]
+
+    _logger.debug("Archive has no single top-level directory; using %s", dest_dir)
+    return dest_dir

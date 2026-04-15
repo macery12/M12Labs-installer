@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -27,6 +29,7 @@ from log import get_logger, setup_logging
 from releases import (
     Release,
     download_archive,
+    extract_archive,
     fetch_releases,
     get_archive_url,
     prompt_release_selection,
@@ -51,12 +54,16 @@ def ensure_linux() -> bool:
     return True
 
 
-def install_menu(cfg: Config) -> Config:
+def select_release_menu(cfg: Config) -> Config:
+    """Fetch GitHub releases, let the user pick one, and save the choice to config.
+
+    Does not download or install anything — only records the selected release
+    tag and archive URL so that :func:`install_menu` can use them later.
+    """
     logger = get_logger()
     clear_screen()
-    print("Install M12 Labs\n")
+    print("Select M12 Labs version\n")
 
-    # Fetch available releases with a spinner.
     releases: list[Release] = []
     fetch_error: Exception | None = None
 
@@ -91,43 +98,56 @@ def install_menu(cfg: Config) -> Config:
         return cfg
 
     clear_screen()
-    print("Install M12 Labs\n")
+    print("Select M12 Labs version\n")
 
     selected = prompt_release_selection(releases)
     if selected is None:
         return cfg
 
-    logger.info("Install: user selected release '%s'", selected.tag)
+    logger.info("Release selected: '%s'", selected.tag)
 
-    # Persist the chosen release immediately so it survives restarts.
     cfg.selected_release = selected.tag
+    cfg.selected_release_url = get_archive_url(selected)
     save_config(cfg)
+    print(f"\n✓ Release {selected.tag} selected and saved.")
+    wait_for_enter()
+    return cfg
 
-    archive_url = get_archive_url(selected)
-    if not archive_url:
-        print("\n✗ No downloadable archive found for this release.")
-        wait_for_enter()
-        return cfg
 
-    filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{selected.tag}.zip"
-    if cfg.install_path:
-        dest_dir = cfg.install_path.parent / "m12labs-downloads"
-    else:
-        dest_dir = Path.home() / ".m12labs" / "downloads"
-
+def install_menu(cfg: Config) -> Config:
+    """Download, extract, copy to install_path, and build the selected release."""
+    logger = get_logger()
     clear_screen()
-    print(f"Install M12 Labs – {selected.name}\n")
-    print(f"  Tag:      {selected.tag}")
-    print(f"  Archive:  {filename}")
-    print(f"  Save to:  {dest_dir}/\n")
+    print("Install M12 Labs\n")
 
-    confirm = input("Proceed with download? [y/N]: ").strip().lower()
-    if confirm != "y":
-        logger.info("Install: download cancelled by user")
-        print("Download cancelled.")
+    if not cfg.selected_release or not cfg.selected_release_url:
+        print("No release selected.")
+        print("Go to Config → Change release version to choose one first.")
         wait_for_enter()
         return cfg
 
+    if not cfg.install_path:
+        print("No install path configured.")
+        wait_for_enter()
+        return cfg
+
+    archive_url = cfg.selected_release_url
+    filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.zip"
+    dest_dir = cfg.install_path.parent / "m12labs-downloads"
+
+    print(f"  Release:  {cfg.selected_release}")
+    print(f"  Archive:  {filename}")
+    print(f"  Save to:  {dest_dir}/")
+    print(f"  Install:  {cfg.install_path}/\n")
+
+    confirm = input("Proceed with installation? [y/N]: ").strip().lower()
+    if confirm != "y":
+        logger.info("Install: cancelled by user")
+        print("Installation cancelled.")
+        wait_for_enter()
+        return cfg
+
+    # --- Download ---
     try:
         dest_path = download_archive(archive_url, dest_dir, filename)
         logger.info("Install: archive downloaded to %s", dest_path)
@@ -135,6 +155,42 @@ def install_menu(cfg: Config) -> Config:
     except (urllib.error.URLError, OSError) as exc:
         logger.error("Install: download failed: %s", exc)
         print(f"\n✗ Download failed: {exc}")
+        wait_for_enter()
+        return cfg
+
+    # --- Extract ---
+    print("\nExtracting archive…")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="m12labs-extract-"))
+    try:
+        try:
+            extracted_root = extract_archive(dest_path, tmp_dir)
+            logger.info("Install: extracted to %s", extracted_root)
+            print(f"✓ Extracted: {extracted_root.name}")
+        except (ValueError, OSError) as exc:
+            logger.error("Install: extraction failed: %s", exc)
+            print(f"\n✗ Extraction failed: {exc}")
+            wait_for_enter()
+            return cfg
+
+        # --- Copy to install_path ---
+        print(f"\nCopying files to {cfg.install_path}…")
+        cfg.install_path.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copytree(str(extracted_root), str(cfg.install_path), dirs_exist_ok=True)
+            logger.info("Install: files copied to %s", cfg.install_path)
+            print("✓ Files copied.")
+        except (OSError, shutil.Error) as exc:
+            logger.error("Install: copy failed: %s", exc)
+            print(f"\n✗ Copy failed: {exc}")
+            wait_for_enter()
+            return cfg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- Build ---
+    print("\nRunning build…")
+    logger.info("Install: starting build for %s", cfg.install_path)
+    run_build_only(cfg.install_path)
 
     wait_for_enter()
     return cfg
@@ -412,7 +468,7 @@ def config_menu(cfg: Config) -> Config:
 
         choice = input("\nSelect an option: ").strip()
         if choice == "1":
-            cfg = install_menu(cfg)
+            cfg = select_release_menu(cfg)
             logger.info("Config changed: selected_release = %s", cfg.selected_release)
         elif choice == "2":
             cfg = prompt_for_install_path(cfg)
@@ -487,9 +543,9 @@ def main() -> int:
     logger = get_logger()
     logger.info("Installer started. Panel path: %s", cfg.install_path)
 
-    # Prompt for release version at startup only if one hasn't been selected yet.
+    # Prompt to pick a release version at startup only if one hasn't been selected yet.
     if not cfg.selected_release:
-        cfg = install_menu(cfg)
+        cfg = select_release_menu(cfg)
 
     installed_extensions: list[str] = []
 
