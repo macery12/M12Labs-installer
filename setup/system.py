@@ -11,18 +11,37 @@ Public API::
     get_package_manager() -> str | None
     with_privilege(cmd) -> list[str] | None
     install_packages(pkgs) -> bool
+    read_env_value(env_path, key) -> str | None
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Sequence
 
 _logger = logging.getLogger("m12labs.setup")
+
+
+def read_env_value(env_path: Path, key: str) -> str | None:
+    """Return the value of *key* from a ``.env`` file, or ``None`` if absent.
+
+    Returns an empty string when the key exists but has no value (``KEY=``).
+    Returns ``None`` when the key is not present at all or the file cannot
+    be read.
+
+    This shared helper avoids duplicating ``.env`` parsing across modules.
+    """
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(rf"^{re.escape(key)}=(.*)$", text, re.MULTILINE)
+    return match.group(1).strip() if match else None
 
 
 def run_command(cmd: Sequence[str], cwd: Path | None = None) -> bool:
