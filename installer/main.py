@@ -51,7 +51,7 @@ def ensure_linux() -> bool:
     return True
 
 
-def install_menu(cfg: Config) -> None:
+def install_menu(cfg: Config) -> Config:
     logger = get_logger()
     clear_screen()
     print("Install M12 Labs\n")
@@ -83,27 +83,31 @@ def install_menu(cfg: Config) -> None:
         logger.error("Failed to fetch releases: %s", fetch_error)
         print(f"✗ Could not fetch releases: {fetch_error}")
         wait_for_enter()
-        return
+        return cfg
 
     if not releases:
         print("No releases found.")
         wait_for_enter()
-        return
+        return cfg
 
     clear_screen()
     print("Install M12 Labs\n")
 
     selected = prompt_release_selection(releases)
     if selected is None:
-        return
+        return cfg
 
     logger.info("Install: user selected release '%s'", selected.tag)
+
+    # Persist the chosen release immediately so it survives restarts.
+    cfg.selected_release = selected.tag
+    save_config(cfg)
 
     archive_url = get_archive_url(selected)
     if not archive_url:
         print("\n✗ No downloadable archive found for this release.")
         wait_for_enter()
-        return
+        return cfg
 
     filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{selected.tag}.zip"
     if cfg.install_path:
@@ -122,7 +126,7 @@ def install_menu(cfg: Config) -> None:
         logger.info("Install: download cancelled by user")
         print("Download cancelled.")
         wait_for_enter()
-        return
+        return cfg
 
     try:
         dest_path = download_archive(archive_url, dest_dir, filename)
@@ -133,6 +137,7 @@ def install_menu(cfg: Config) -> None:
         print(f"\n✗ Download failed: {exc}")
 
     wait_for_enter()
+    return cfg
 
 
 def uninstall_menu(installed_extensions: list[str]) -> None:
@@ -397,6 +402,7 @@ def config_menu(cfg: Config) -> Config:
     while True:
         clear_screen()
         print("Config\n")
+        print(f"1. Change release version       [{cfg.selected_release or 'not selected'}]")
         print(f"2. Change install path          [{cfg.install_path}]")
         print(f"3. Show detailed checks         [{'on' if cfg.show_detailed_checks else 'off'}]")
         print(f"4. Text log files               [{'on' if cfg.text_logs_enabled else 'off'}]")
@@ -405,7 +411,10 @@ def config_menu(cfg: Config) -> Config:
         print("0. Back")
 
         choice = input("\nSelect an option: ").strip()
-        if choice == "2":
+        if choice == "1":
+            cfg = install_menu(cfg)
+            logger.info("Config changed: selected_release = %s", cfg.selected_release)
+        elif choice == "2":
             cfg = prompt_for_install_path(cfg)
             logger.info("Config changed: install_path = %s", cfg.install_path)
             wait_for_enter()
@@ -459,6 +468,7 @@ def _print_startup_summary(cfg: Config) -> None:
 
     print("─" * 44)
     print(f"  {'Install path':<15}: {cfg.install_path}")
+    print(f"  {'Release':<15}: {cfg.selected_release or 'not selected'}")
     print(f"  {'Text logging':<15}: {'enabled' if cfg.text_logs_enabled else 'disabled'}")
     print(f"  {'Detailed checks':<15}: {'on' if cfg.show_detailed_checks else 'off'}")
     print(f"  {'Backups':<15}: {backup_count} available")
@@ -477,8 +487,9 @@ def main() -> int:
     logger = get_logger()
     logger.info("Installer started. Panel path: %s", cfg.install_path)
 
-    # Prompt for release version immediately after the install-path entry.
-    install_menu(cfg)
+    # Prompt for release version at startup only if one hasn't been selected yet.
+    if not cfg.selected_release:
+        cfg = install_menu(cfg)
 
     installed_extensions: list[str] = []
 
@@ -498,7 +509,7 @@ def main() -> int:
         choice = input("\nSelect an option: ").strip()
         if choice == "1":
             logger.info("Menu: Install")
-            install_menu(cfg)
+            cfg = install_menu(cfg)
         elif choice == "2":
             logger.info("Menu: Uninstall")
             uninstall_menu(installed_extensions)

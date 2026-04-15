@@ -19,23 +19,9 @@ _PAGE_SIZE = 10
 class Release:
     tag: str
     name: str
-    description: str
     prerelease: bool
     assets: list[dict] = field(default_factory=list)
     zipball_url: str = ""
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _first_line(text: str, max_len: int = 72) -> str:
-    """Return the first non-empty line of *text*, truncated to *max_len*."""
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            return line if len(line) <= max_len else line[:max_len - 3] + "..."
-    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +48,6 @@ def fetch_releases() -> list[Release]:
     for item in data:
         tag = item.get("tag_name", "")
         name = (item.get("name") or tag).strip()
-        body = item.get("body") or ""
         releases.append(
             Release(
                 tag=tag,
@@ -116,8 +101,6 @@ def prompt_release_selection(releases: list[Release]) -> Release | None:
         for i, release in enumerate(page_items, start=1):
             label = "  [pre-release]" if release.prerelease else ""
             print(f"  {i}. {release.name}{label}")
-            if release.description:
-                print(f"     {release.description}")
 
         print()
         options: list[str] = []
