@@ -15,6 +15,12 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
+# Make the repo root available on sys.path so ``setup.*`` modules can be
+# imported from within installer/main.py regardless of how Python was invoked.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from backup import BackupEntry, create_backup, default_backups_dir, list_backups, restore_backup
 from build import build_only as run_build_only
 from check import (
@@ -114,8 +120,78 @@ def select_release_menu(cfg: Config) -> Config:
     return cfg
 
 
+def _prompt_db_config() -> tuple[str, str, str]:
+    """Prompt for database name, user, and password (password never persisted).
+
+    Returns ``(db_name, db_user, db_pass)``.
+    """
+    from setup.config import DEFAULT_DB_NAME, DEFAULT_DB_USER, generate_db_password
+
+    print("\nDatabase configuration:")
+    raw_name = input(f"  DB name   [default: {DEFAULT_DB_NAME}]: ").strip()
+    db_name = raw_name if raw_name else DEFAULT_DB_NAME
+
+    raw_user = input(f"  DB user   [default: {DEFAULT_DB_USER}]: ").strip()
+    db_user = raw_user if raw_user else DEFAULT_DB_USER
+
+    print("  DB password: leave blank to auto-generate a secure password.")
+    raw_pass = input("  DB password [blank = auto-generate]: ").strip()
+    if raw_pass:
+        db_pass = raw_pass
+    else:
+        db_pass = generate_db_password()
+        print(f"  Generated password: {db_pass}")
+        print("  (Save this now – it will not be shown again.)")
+
+    return db_name, db_user, db_pass
+
+
+def _set_panel_permissions(install_path: Path) -> None:
+    """Set storage/bootstrap/cache permissions and www-data ownership."""
+    from setup.system import run_command_no_cwd, with_privilege
+
+    for rel_dir in ("storage", "bootstrap/cache"):
+        target = install_path / rel_dir
+        if target.exists():
+            chmod_cmd = with_privilege(["chmod", "-R", "755", str(target)])
+            if chmod_cmd:
+                run_command_no_cwd(chmod_cmd)
+
+    chown_cmd = with_privilege(["chown", "-R", "www-data:www-data", str(install_path)])
+    if chown_cmd:
+        run_command_no_cwd(chown_cmd)
+
+
+def _print_install_summary(install_path: Path, db_name: str, db_user: str) -> None:
+    width = 60
+    print("\n" + "─" * width)
+    print("  M12Labs panel installation complete!")
+    print("─" * width)
+    print(f"  Install path : {install_path}")
+    print(f"  DB name      : {db_name}")
+    print(f"  DB user      : {db_user}")
+    print(f"  DB password  : (saved in {install_path / '.env'})")
+    print("─" * width)
+    print()
+    print("  Next steps:")
+    print()
+    print("  1. Configure NGINX to serve the panel:")
+    print(f"       root {install_path / 'public'};")
+    print("       index index.php;")
+    print("       (see M12Docs for a full NGINX server block example)")
+    print()
+    print("  2. Set up SSL (Let's Encrypt recommended):")
+    print("       sudo apt-get install certbot python3-certbot-nginx")
+    print("       sudo certbot --nginx -d your.domain.com")
+    print()
+    print("  3. Start / restart NGINX:")
+    print("       sudo systemctl restart nginx")
+    print()
+    print("─" * width)
+
+
 def install_menu(cfg: Config) -> Config:
-    """Download, extract, copy to install_path, and build the selected release."""
+    """Full install: download → extract → copy → deps → build → DB → Laravel → workers."""
     logger = get_logger()
     clear_screen()
     print("Install M12 Labs\n")
@@ -140,26 +216,31 @@ def install_menu(cfg: Config) -> Config:
     print(f"  Save to:  {dest_dir}/")
     print(f"  Install:  {cfg.install_path}/\n")
 
-    confirm = input("Proceed with installation? [y/N]: ").strip().lower()
+    confirm = input("Proceed with full installation? [y/N]: ").strip().lower()
     if confirm != "y":
         logger.info("Install: cancelled by user")
         print("Installation cancelled.")
         wait_for_enter()
         return cfg
 
+    # Collect DB config upfront before any long-running work.
+    db_name, db_user, db_pass = _prompt_db_config()
+
     # --- Download ---
+    print("\n[1/6] Downloading release archive…")
     try:
         dest_path = download_archive(archive_url, dest_dir, filename)
         logger.info("Install: archive downloaded to %s", dest_path)
-        print(f"\n✓ Downloaded: {dest_path}")
+        print(f"✓ Downloaded: {dest_path}")
     except (urllib.error.URLError, OSError) as exc:
         logger.error("Install: download failed: %s", exc)
         print(f"\n✗ Download failed: {exc}")
+        db_pass = ""
         wait_for_enter()
         return cfg
 
-    # --- Extract ---
-    print("\nExtracting archive…")
+    # --- Extract & Copy ---
+    print("\n[2/6] Extracting and copying files…")
     tmp_dir = Path(tempfile.mkdtemp(prefix="m12labs-extract-"))
     try:
         try:
@@ -169,28 +250,79 @@ def install_menu(cfg: Config) -> Config:
         except (ValueError, OSError) as exc:
             logger.error("Install: extraction failed: %s", exc)
             print(f"\n✗ Extraction failed: {exc}")
+            db_pass = ""
             wait_for_enter()
             return cfg
 
-        # --- Copy to install_path ---
-        print(f"\nCopying files to {cfg.install_path}…")
         cfg.install_path.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copytree(str(extracted_root), str(cfg.install_path), dirs_exist_ok=True)
             logger.info("Install: files copied to %s", cfg.install_path)
-            print("✓ Files copied.")
+            print(f"✓ Files copied to {cfg.install_path}")
         except (OSError, shutil.Error) as exc:
             logger.error("Install: copy failed: %s", exc)
             print(f"\n✗ Copy failed: {exc}")
+            db_pass = ""
             wait_for_enter()
             return cfg
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # --- Build ---
-    print("\nRunning build…")
-    logger.info("Install: starting build for %s", cfg.install_path)
+    # Set permissions before running any commands against the install_path.
+    print("  Setting file permissions…")
+    _set_panel_permissions(cfg.install_path)
+
+    # --- System dependencies (PHP, MariaDB, NGINX, Redis, Composer) ---
+    print("\n[3/6] Installing system dependencies…")
+    logger.info("Install: installing system dependencies")
+    from setup.steps.deps import install_dependencies
+    if not install_dependencies():
+        logger.error("Install aborted: system dependencies failed")
+        print("\n✗ Installation failed at system dependencies step.")
+        db_pass = ""
+        wait_for_enter()
+        return cfg
+
+    # --- Frontend build (pnpm) ---
+    print("\n[4/6] Building frontend assets…")
+    logger.info("Install: starting pnpm build for %s", cfg.install_path)
     run_build_only(cfg.install_path)
+
+    # --- Database ---
+    print("\n[5/6] Setting up database…")
+    logger.info("Install: setting up database db_name=%s db_user=%s", db_name, db_user)
+    from setup.steps.database import setup_database
+    if not setup_database(db_name, db_user, db_pass):
+        logger.error("Install aborted: database setup failed")
+        print("\n✗ Installation failed at database setup step.")
+        db_pass = ""
+        wait_for_enter()
+        return cfg
+
+    # --- Laravel (composer install, .env, artisan commands, user creation) ---
+    print("\n[6/6] Configuring Laravel environment…")
+    logger.info("Install: configuring Laravel at %s", cfg.install_path)
+    from setup.steps.laravel import configure_laravel
+    if not configure_laravel(cfg.install_path, db_name, db_user, db_pass):
+        logger.error("Install aborted: Laravel configuration failed")
+        print("\n✗ Installation failed at Laravel configuration step.")
+        db_pass = ""
+        wait_for_enter()
+        return cfg
+
+    # Password no longer needed after Laravel step.
+    db_pass = ""
+
+    # --- Workers (cron + systemd queue worker) ---
+    print("\nConfiguring cron job and queue worker…")
+    logger.info("Install: configuring workers for %s", cfg.install_path)
+    from setup.steps.workers import configure_workers
+    if not configure_workers(cfg.install_path):
+        logger.error("Install: workers configuration failed (non-fatal)")
+        print("\n⚠  Warning: worker setup failed – you can configure it manually.")
+
+    logger.info("Install completed successfully: install_path=%s", cfg.install_path)
+    _print_install_summary(cfg.install_path, db_name, db_user)
 
     wait_for_enter()
     return cfg
