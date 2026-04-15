@@ -476,6 +476,10 @@ def main() -> int:
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
     logger.info("Installer started. Panel path: %s", cfg.install_path)
+
+    # Prompt for release version immediately after the install-path entry.
+    install_menu(cfg)
+
     installed_extensions: list[str] = []
 
     while True:
