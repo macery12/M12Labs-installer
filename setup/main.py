@@ -27,6 +27,7 @@ Security:
 
 from __future__ import annotations
 
+import argparse
 import os
 import platform
 import shutil
@@ -91,8 +92,12 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
     print("─" * width)
 
 
-def full_install() -> int:
+def full_install(develop: bool = False) -> int:
     """Run the complete interactive panel install walkthrough.
+
+    Args:
+        develop: When ``True``, clone the develop branch via ``git clone``
+                 instead of downloading the stable release tarball.
 
     Returns:
         ``0`` on success, ``1`` on failure.
@@ -102,13 +107,15 @@ def full_install() -> int:
     from setup.config import InstallConfig, load_config, prompt_for_db_config, prompt_for_install_path
     from setup.log import get_logger, setup_logging
     from setup.steps.deps import install_dependencies
-    from setup.steps.files import download_panel
+    from setup.steps.files import clone_panel, download_panel
     from setup.steps.database import setup_database
     from setup.steps.laravel import configure_laravel
     from setup.steps.workers import configure_workers
 
     print("=" * 60)
     print("  M12Labs Panel Setup – Interactive Installer")
+    if develop:
+        print("  Channel: develop (git clone)")
     print("=" * 60)
     print()
 
@@ -146,7 +153,12 @@ def full_install() -> int:
         return 1
 
     # Step 2: Download panel files
-    if not download_panel(install_path):
+    if develop:
+        if not clone_panel(install_path):
+            logger.error("Install aborted: Step 2 (clone) failed")
+            print("\n✗ Installation failed at Step 2. See output above.")
+            return 1
+    elif not download_panel(install_path):
         logger.error("Install aborted: Step 2 (download) failed")
         print("\n✗ Installation failed at Step 2. See output above.")
         return 1
@@ -180,7 +192,14 @@ def full_install() -> int:
 
 
 def main() -> int:
-    return full_install()
+    parser = argparse.ArgumentParser(description="M12Labs Panel Setup")
+    parser.add_argument(
+        "--develop",
+        action="store_true",
+        help="Install from the develop branch via git clone instead of the stable release tarball.",
+    )
+    args = parser.parse_args()
+    return full_install(develop=args.develop)
 
 
 if __name__ == "__main__":
