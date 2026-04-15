@@ -9,6 +9,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 from pathlib import Path
 
 from backup import BackupEntry, create_backup, default_backups_dir, list_backups, restore_backup
@@ -22,12 +24,13 @@ from check import (
 )
 from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
 from log import get_logger, setup_logging
-
-PLACEHOLDER_EXTENSION_COUNT = 12
-EXTENSION_CATALOG = [
-    f"Extension {i}" for i in range(1, PLACEHOLDER_EXTENSION_COUNT + 1)
-]
-PAGE_SIZE = 6
+from releases import (
+    Release,
+    download_archive,
+    fetch_releases,
+    get_archive_url,
+    prompt_release_selection,
+)
 
 
 def clear_screen() -> None:
@@ -48,46 +51,88 @@ def ensure_linux() -> bool:
     return True
 
 
-def calculate_total_pages(item_count: int, page_size: int) -> int:
-    if item_count <= 0:
-        return 1
-    return (item_count - 1) // page_size + 1
-
-
-def install_menu() -> None:
+def install_menu(cfg: Config) -> None:
     logger = get_logger()
-    page = 0
-    while True:
-        clear_screen()
-        start = page * PAGE_SIZE
-        end = start + PAGE_SIZE
-        page_items = EXTENSION_CATALOG[start:end]
-        total_pages = calculate_total_pages(len(EXTENSION_CATALOG), PAGE_SIZE)
-        next_option_number = len(page_items) + 1
-        back_option_number = len(page_items) + 2
+    clear_screen()
+    print("Install M12 Labs\n")
 
-        print("Install extensions (template)")
-        print(f"Page {page + 1}/{total_pages}\n")
-        for index, extension_name in enumerate(page_items, start=1):
-            print(f"{index}. {extension_name}")
-        print(f"{next_option_number}. Next page")
-        print(f"{back_option_number}. Back")
+    # Fetch available releases with a spinner.
+    releases: list[Release] = []
+    fetch_error: Exception | None = None
 
-        choice = input("\nSelect an option: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(page_items):
-            parsed_choice = int(choice)
-            selected = page_items[parsed_choice - 1]
-            logger.info("Install action: selected extension '%s'", selected)
-            print(f"\nInstall placeholder for: {selected}")
-            print("Real install logic will be added in a future phase.")
-            wait_for_enter()
-        elif choice == str(next_option_number):
-            page = (page + 1) % total_pages
-        elif choice == str(back_option_number):
-            return
-        else:
-            print("\nInvalid option.")
-            wait_for_enter()
+    def _fetch() -> None:
+        nonlocal releases, fetch_error
+        try:
+            releases = fetch_releases()
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            fetch_error = exc
+
+    thread = threading.Thread(target=_fetch, daemon=True)
+    thread.start()
+
+    spinner = ["|", "/", "-", "\\"]
+    idx = 0
+    while thread.is_alive():
+        print(f"\r  {spinner[idx % len(spinner)]}  Fetching available versions…", end="", flush=True)
+        idx += 1
+        time.sleep(0.15)
+    thread.join()
+    print("\r" + " " * 50 + "\r", end="", flush=True)
+
+    if fetch_error:
+        logger.error("Failed to fetch releases: %s", fetch_error)
+        print(f"✗ Could not fetch releases: {fetch_error}")
+        wait_for_enter()
+        return
+
+    if not releases:
+        print("No releases found.")
+        wait_for_enter()
+        return
+
+    clear_screen()
+    print("Install M12 Labs\n")
+
+    selected = prompt_release_selection(releases)
+    if selected is None:
+        return
+
+    logger.info("Install: user selected release '%s'", selected.tag)
+
+    archive_url = get_archive_url(selected)
+    if not archive_url:
+        print("\n✗ No downloadable archive found for this release.")
+        wait_for_enter()
+        return
+
+    filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{selected.tag}.zip"
+    if cfg.install_path:
+        dest_dir = cfg.install_path.parent / "m12labs-downloads"
+    else:
+        dest_dir = Path.home() / ".m12labs" / "downloads"
+
+    clear_screen()
+    print(f"Install M12 Labs – {selected.name}\n")
+    print(f"  Tag:      {selected.tag}")
+    print(f"  Archive:  {filename}")
+    print(f"  Save to:  {dest_dir}/\n")
+
+    confirm = input("Proceed with download? [y/N]: ").strip().lower()
+    if confirm != "y":
+        logger.info("Install: download cancelled by user")
+        print("Download cancelled.")
+        wait_for_enter()
+        return
+
+    try:
+        dest_path = download_archive(archive_url, dest_dir, filename)
+        logger.info("Install: archive downloaded to %s", dest_path)
+        print(f"\n✓ Downloaded: {dest_path}")
+    except (urllib.error.URLError, OSError) as exc:
+        logger.error("Install: download failed: %s", exc)
+        print(f"\n✗ Download failed: {exc}")
+
+    wait_for_enter()
 
 
 def uninstall_menu(installed_extensions: list[str]) -> None:
@@ -449,7 +494,7 @@ def main() -> int:
         choice = input("\nSelect an option: ").strip()
         if choice == "1":
             logger.info("Menu: Install")
-            install_menu()
+            install_menu(cfg)
         elif choice == "2":
             logger.info("Menu: Uninstall")
             uninstall_menu(installed_extensions)
