@@ -34,13 +34,15 @@ _TARBALL_NAME = "panel.tar.gz"
 
 def download_panel(
     install_path: Path,
-    release_url: str = DEFAULT_RELEASE_URL,
+    release_url: str | None = None,
 ) -> bool:
     """Download and extract the M12Labs panel into *install_path*.
 
     Steps:
         1. Create *install_path* if it does not exist (prints what it does).
-        2. Download the tarball from *release_url* via ``curl``.
+        2. Download the tarball from *release_url* via ``curl``
+           (falls back to :data:`DEFAULT_RELEASE_URL` when *release_url* is
+           ``None`` or empty).
         3. Extract the tarball into *install_path*.
         4. Remove the downloaded tarball.
         5. Set ``755`` permissions on ``storage/`` and ``bootstrap/cache/``.
@@ -48,6 +50,8 @@ def download_panel(
 
     Returns ``True`` on success, ``False`` on the first failure.
     """
+    if not release_url:
+        release_url = DEFAULT_RELEASE_URL
     logger = get_logger()
     logger.info("Step 2: Downloading panel from %s to %s", release_url, install_path)
     print("\n[2/5] Downloading panel files…")

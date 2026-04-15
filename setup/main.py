@@ -14,10 +14,11 @@ Can be invoked in any of these ways::
 The installer will:
   1. Verify the platform is Linux.
   2. Load (or create) ``setup/config.toml`` with sensible defaults.
-  3. Interactively prompt for the panel install path, DB name, DB user,
-     and DB password (the password is held in memory only – never saved).
-  4. Execute each install step in order, printing live progress.
-  5. Print a final summary with NGINX / SSL reminders.
+  3. Prompt for the panel install path.
+  4. Prompt to select a release version (or develop branch).
+  5. Prompt for DB name, DB user, and DB password (password held in memory only).
+  6. Execute each install step in order, printing live progress.
+  7. Print a final summary with NGINX / SSL reminders.
 
 Security:
     The database password is NEVER written to ``setup/config.toml`` or
@@ -27,7 +28,6 @@ Security:
 
 from __future__ import annotations
 
-import argparse
 import os
 import platform
 import shutil
@@ -92,30 +92,25 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
     print("─" * width)
 
 
-def full_install(develop: bool = False) -> int:
+def full_install() -> int:
     """Run the complete interactive panel install walkthrough.
-
-    Args:
-        develop: When ``True``, clone the develop branch via ``git clone``
-                 instead of downloading the stable release tarball.
 
     Returns:
         ``0`` on success, ``1`` on failure.
     """
     # Deferred imports keep startup fast and allow the platform guard to run
     # before any setup-module code is imported.
-    from setup.config import InstallConfig, load_config, prompt_for_db_config, prompt_for_install_path
+    from setup.config import load_config, prompt_for_db_config, prompt_for_install_path, prompt_for_release
     from setup.log import get_logger, setup_logging
     from setup.steps.deps import install_dependencies
     from setup.steps.files import clone_panel, download_panel
+    from setup.steps.releases import DEVELOP_BRANCH_TAG
     from setup.steps.database import setup_database
     from setup.steps.laravel import configure_laravel
     from setup.steps.workers import configure_workers
 
     print("=" * 60)
     print("  M12Labs Panel Setup – Interactive Installer")
-    if develop:
-        print("  Channel: develop (git clone)")
     print("=" * 60)
     print()
 
@@ -125,16 +120,20 @@ def full_install(develop: bool = False) -> int:
     _warn_if_not_privileged()
 
     # Config and prompts
-    cfg: InstallConfig = load_config()
+    cfg = load_config()
     cfg = prompt_for_install_path(cfg)
+    cfg = prompt_for_release(cfg)
     cfg, db_pass = prompt_for_db_config(cfg)
+
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
 
     # Logging (after install_path is known)
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
     logger.info(
-        "Install started: install_path=%s, db_name=%s, db_user=%s",
+        "Install started: install_path=%s, release=%s, db_name=%s, db_user=%s",
         cfg.install_path,
+        cfg.selected_release or "(default)",
         cfg.db_name,
         cfg.db_user,
     )
@@ -152,13 +151,13 @@ def full_install(develop: bool = False) -> int:
         print("\n✗ Installation failed at Step 1. See output above.")
         return 1
 
-    # Step 2: Download panel files
-    if develop:
+    # Step 2: Obtain panel files
+    if is_develop:
         if not clone_panel(install_path):
             logger.error("Install aborted: Step 2 (clone) failed")
             print("\n✗ Installation failed at Step 2. See output above.")
             return 1
-    elif not download_panel(install_path):
+    elif not download_panel(install_path, release_url=cfg.selected_release_url or None):
         logger.error("Install aborted: Step 2 (download) failed")
         print("\n✗ Installation failed at Step 2. See output above.")
         return 1
@@ -192,14 +191,7 @@ def full_install(develop: bool = False) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M12Labs Panel Setup")
-    parser.add_argument(
-        "--develop",
-        action="store_true",
-        help="Install from the develop branch via git clone instead of the stable release tarball.",
-    )
-    args = parser.parse_args()
-    return full_install(develop=args.develop)
+    return full_install()
 
 
 if __name__ == "__main__":

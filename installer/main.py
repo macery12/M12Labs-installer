@@ -5,21 +5,11 @@ from __future__ import annotations
 
 import os
 import platform
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import urllib.error
-import urllib.parse
 from pathlib import Path
-
-# Make the repo root available on sys.path so ``setup.*`` modules can be
-# imported from within installer/main.py regardless of how Python was invoked.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 from backup import BackupEntry, create_backup, default_backups_dir, list_backups, restore_backup
 from build import build_only as run_build_only
@@ -32,16 +22,12 @@ from check import (
 )
 from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
 from log import get_logger, setup_logging
-from releases import (
-    DEVELOP_BRANCH_TAG,
-    DEVELOP_REPO_GIT_URL,
-    Release,
-    download_archive,
-    extract_archive,
-    fetch_releases,
-    get_archive_url,
-    prompt_release_selection,
-)
+
+PLACEHOLDER_EXTENSION_COUNT = 12
+EXTENSION_CATALOG = [
+    f"Extension {i}" for i in range(1, PLACEHOLDER_EXTENSION_COUNT + 1)
+]
+PAGE_SIZE = 6
 
 
 def clear_screen() -> None:
@@ -62,339 +48,46 @@ def ensure_linux() -> bool:
     return True
 
 
-def select_release_menu(cfg: Config) -> Config:
-    """Fetch GitHub releases, let the user pick one, and save the choice to config.
+def calculate_total_pages(item_count: int, page_size: int) -> int:
+    if item_count <= 0:
+        return 1
+    return (item_count - 1) // page_size + 1
 
-    Does not download or install anything — only records the selected release
-    tag and archive URL so that :func:`install_menu` can use them later.
-    """
+
+def install_menu() -> None:
     logger = get_logger()
-    clear_screen()
-    print("Select M12 Labs version\n")
+    page = 0
+    while True:
+        clear_screen()
+        start = page * PAGE_SIZE
+        end = start + PAGE_SIZE
+        page_items = EXTENSION_CATALOG[start:end]
+        total_pages = calculate_total_pages(len(EXTENSION_CATALOG), PAGE_SIZE)
+        next_option_number = len(page_items) + 1
+        back_option_number = len(page_items) + 2
 
-    releases: list[Release] = []
-    fetch_error: Exception | None = None
+        print("Install extensions (template)")
+        print(f"Page {page + 1}/{total_pages}\n")
+        for index, extension_name in enumerate(page_items, start=1):
+            print(f"{index}. {extension_name}")
+        print(f"{next_option_number}. Next page")
+        print(f"{back_option_number}. Back")
 
-    def _fetch() -> None:
-        nonlocal releases, fetch_error
-        try:
-            releases = fetch_releases()
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            fetch_error = exc
-
-    thread = threading.Thread(target=_fetch, daemon=True)
-    thread.start()
-
-    spinner = ["|", "/", "-", "\\"]
-    idx = 0
-    while thread.is_alive():
-        print(f"\r  {spinner[idx % len(spinner)]}  Fetching available versions…", end="", flush=True)
-        idx += 1
-        time.sleep(0.15)
-    thread.join()
-    print("\r" + " " * 50 + "\r", end="", flush=True)
-
-    if fetch_error:
-        logger.error("Failed to fetch releases: %s", fetch_error)
-        print(f"✗ Could not fetch releases: {fetch_error}")
-        wait_for_enter()
-        return cfg
-
-    if not releases:
-        print("No releases found.")
-        wait_for_enter()
-        return cfg
-
-    clear_screen()
-    print("Select M12 Labs version\n")
-
-    selected = prompt_release_selection(releases)
-    if selected is None:
-        return cfg
-
-    logger.info("Release selected: '%s'", selected.tag)
-
-    cfg.selected_release = selected.tag
-    if selected.tag == DEVELOP_BRANCH_TAG:
-        cfg.selected_release_url = ""
-        save_config(cfg)
-        print("\n✓ Develop branch selected – will git clone and build from source during install.")
-    else:
-        cfg.selected_release_url = get_archive_url(selected)
-        save_config(cfg)
-        print(f"\n✓ Release {selected.tag} selected and saved.")
-    wait_for_enter()
-    return cfg
-
-
-def _prompt_db_config() -> tuple[str, str, str]:
-    """Prompt for database name, user, and password (password never persisted).
-
-    Returns ``(db_name, db_user, db_pass)``.
-    """
-    from setup.config import DEFAULT_DB_NAME, DEFAULT_DB_USER, generate_db_password
-
-    print("\nDatabase configuration:")
-    raw_name = input(f"  DB name   [default: {DEFAULT_DB_NAME}]: ").strip()
-    db_name = raw_name if raw_name else DEFAULT_DB_NAME
-
-    raw_user = input(f"  DB user   [default: {DEFAULT_DB_USER}]: ").strip()
-    db_user = raw_user if raw_user else DEFAULT_DB_USER
-
-    print("  DB password: leave blank to auto-generate a secure password.")
-    raw_pass = input("  DB password [blank = auto-generate]: ").strip()
-    if raw_pass:
-        db_pass = raw_pass
-    else:
-        db_pass = generate_db_password()
-        print(f"  Generated password: {db_pass}")
-        print("  (Save this now – it will not be shown again.)")
-
-    return db_name, db_user, db_pass
-
-
-def _set_panel_permissions(install_path: Path) -> None:
-    """Set storage/bootstrap/cache permissions and www-data ownership."""
-    from setup.system import run_command_no_cwd, with_privilege
-
-    for rel_dir in ("storage", "bootstrap/cache"):
-        target = install_path / rel_dir
-        if target.exists():
-            chmod_cmd = with_privilege(["chmod", "-R", "755", str(target)])
-            if chmod_cmd:
-                run_command_no_cwd(chmod_cmd)
-
-    chown_cmd = with_privilege(["chown", "-R", "www-data:www-data", str(install_path)])
-    if chown_cmd:
-        run_command_no_cwd(chown_cmd)
-
-
-def _print_install_summary(install_path: Path, db_name: str, db_user: str) -> None:
-    width = 60
-    print("\n" + "─" * width)
-    print("  M12Labs panel installation complete!")
-    print("─" * width)
-    print(f"  Install path : {install_path}")
-    print(f"  DB name      : {db_name}")
-    print(f"  DB user      : {db_user}")
-    print(f"  DB password  : (saved in {install_path / '.env'})")
-    print("─" * width)
-    print()
-    print("  Next steps:")
-    print()
-    print("  1. Configure NGINX to serve the panel:")
-    print(f"       root {install_path / 'public'};")
-    print("       index index.php;")
-    print("       (see M12Docs for a full NGINX server block example)")
-    print()
-    print("  2. Set up SSL (Let's Encrypt recommended):")
-    print("       sudo apt-get install certbot python3-certbot-nginx")
-    print("       sudo certbot --nginx -d your.domain.com")
-    print()
-    print("  3. Start / restart NGINX:")
-    print("       sudo systemctl restart nginx")
-    print()
-    print("─" * width)
-
-
-def install_menu(cfg: Config) -> Config:
-    """Full install flow.
-
-    * **Release** (tar.gz / zip from GitHub releases): download → extract/copy →
-      system deps → DB → Laravel → workers  (6 steps, no build – already built)
-    * **Develop branch**: git clone → system deps → build → DB → Laravel → workers
-      (6 steps, pnpm build always required for unbuilt source)
-    """
-    logger = get_logger()
-    clear_screen()
-    print("Install M12 Labs\n")
-
-    if not cfg.selected_release:
-        print("No release selected.")
-        print("Go to Config → Change release version to choose one first.")
-        wait_for_enter()
-        return cfg
-
-    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
-
-    # Release installs need a resolved archive URL.
-    if not is_develop and not cfg.selected_release_url:
-        print("No release URL configured.")
-        print("Go to Config → Change release version to choose one first.")
-        wait_for_enter()
-        return cfg
-
-    if not cfg.install_path:
-        print("No install path configured.")
-        wait_for_enter()
-        return cfg
-
-    total_steps = 6
-
-    if is_develop:
-        print(f"  Source:   develop branch (git clone from {DEVELOP_REPO_GIT_URL})")
-        print(f"  Install:  {cfg.install_path}/")
-        print("  Note:     frontend assets will be built from source\n")
-    else:
-        archive_url = cfg.selected_release_url
-        filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.tar.gz"
-        dest_dir = cfg.install_path.parent / "m12labs-downloads"
-        print(f"  Release:  {cfg.selected_release}")
-        print(f"  Archive:  {filename}")
-        print(f"  Save to:  {dest_dir}/")
-        print(f"  Install:  {cfg.install_path}/\n")
-
-    confirm = input("Proceed with full installation? [y/N]: ").strip().lower()
-    if confirm != "y":
-        logger.info("Install: cancelled by user")
-        print("Installation cancelled.")
-        wait_for_enter()
-        return cfg
-
-    # Collect DB config upfront before any long-running work.
-    db_name, db_user, db_pass = _prompt_db_config()
-
-    step = 0
-
-    def next_step(label: str) -> str:
-        nonlocal step
-        step += 1
-        return f"\n[{step}/{total_steps}] {label}"
-
-    if is_develop:
-        # --- Git clone ---
-        print(next_step("Cloning develop branch…"))
-        logger.info("Install: git clone %s -> %s", DEVELOP_REPO_GIT_URL, cfg.install_path)
-        # Ensure the *parent* directory exists; git clone creates the target dir itself.
-        cfg.install_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            result = subprocess.run(
-                [
-                    "git", "clone", "--depth", "1",
-                    "--branch", "develop",
-                    DEVELOP_REPO_GIT_URL,
-                    str(cfg.install_path),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                raise OSError(result.stderr.strip() or "git clone failed")
-            logger.info("Install: git clone complete")
-            print(f"✓ Cloned develop branch to {cfg.install_path}")
-        except (OSError, FileNotFoundError) as exc:
-            logger.error("Install: git clone failed: %s", exc)
-            print(f"\n✗ Git clone failed: {exc}")
-            db_pass = ""
+        choice = input("\nSelect an option: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(page_items):
+            parsed_choice = int(choice)
+            selected = page_items[parsed_choice - 1]
+            logger.info("Install action: selected extension '%s'", selected)
+            print(f"\nInstall placeholder for: {selected}")
+            print("Real install logic will be added in a future phase.")
             wait_for_enter()
-            return cfg
-
-    else:
-        archive_url = cfg.selected_release_url
-        filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.tar.gz"
-        dest_dir = cfg.install_path.parent / "m12labs-downloads"
-
-        # --- Download ---
-        print(next_step("Downloading release archive…"))
-        try:
-            dest_path = download_archive(archive_url, dest_dir, filename)
-            logger.info("Install: archive downloaded to %s", dest_path)
-            print(f"✓ Downloaded: {dest_path}")
-        except (urllib.error.URLError, OSError) as exc:
-            logger.error("Install: download failed: %s", exc)
-            print(f"\n✗ Download failed: {exc}")
-            db_pass = ""
+        elif choice == str(next_option_number):
+            page = (page + 1) % total_pages
+        elif choice == str(back_option_number):
+            return
+        else:
+            print("\nInvalid option.")
             wait_for_enter()
-            return cfg
-
-        # --- Extract & Copy ---
-        print(next_step("Extracting and copying files…"))
-        tmp_dir = Path(tempfile.mkdtemp(prefix="m12labs-extract-"))
-        try:
-            try:
-                extracted_root = extract_archive(dest_path, tmp_dir)
-                logger.info("Install: extracted to %s", extracted_root)
-                print(f"✓ Extracted: {extracted_root.name}")
-            except (ValueError, OSError) as exc:
-                logger.error("Install: extraction failed: %s", exc)
-                print(f"\n✗ Extraction failed: {exc}")
-                db_pass = ""
-                wait_for_enter()
-                return cfg
-
-            cfg.install_path.mkdir(parents=True, exist_ok=True)
-            try:
-                shutil.copytree(str(extracted_root), str(cfg.install_path), dirs_exist_ok=True)
-                logger.info("Install: files copied to %s", cfg.install_path)
-                print(f"✓ Files copied to {cfg.install_path}")
-            except (OSError, shutil.Error) as exc:
-                logger.error("Install: copy failed: %s", exc)
-                print(f"\n✗ Copy failed: {exc}")
-                db_pass = ""
-                wait_for_enter()
-                return cfg
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    # Set permissions before running any commands against the install_path.
-    print("  Setting file permissions…")
-    _set_panel_permissions(cfg.install_path)
-
-    # --- System dependencies (PHP, MariaDB, NGINX, Redis, Composer) ---
-    print(next_step("Installing system dependencies…"))
-    logger.info("Install: installing system dependencies")
-    from setup.steps.deps import install_dependencies
-    if not install_dependencies():
-        logger.error("Install aborted: system dependencies failed")
-        print("\n✗ Installation failed at system dependencies step.")
-        db_pass = ""
-        wait_for_enter()
-        return cfg
-
-    # --- Frontend build (develop branch only – releases are pre-built) ---
-    if is_develop:
-        print(next_step("Building frontend assets…"))
-        logger.info("Install: starting pnpm build for %s", cfg.install_path)
-        run_build_only(cfg.install_path)
-
-    # --- Database ---
-    print(next_step("Setting up database…"))
-    logger.info("Install: setting up database db_name=%s db_user=%s", db_name, db_user)
-    from setup.steps.database import setup_database
-    if not setup_database(db_name, db_user, db_pass):
-        logger.error("Install aborted: database setup failed")
-        print("\n✗ Installation failed at database setup step.")
-        db_pass = ""
-        wait_for_enter()
-        return cfg
-
-    # --- Laravel (composer install, .env, artisan commands, user creation) ---
-    print(next_step("Configuring Laravel environment…"))
-    logger.info("Install: configuring Laravel at %s", cfg.install_path)
-    from setup.steps.laravel import configure_laravel
-    if not configure_laravel(cfg.install_path, db_name, db_user, db_pass):
-        logger.error("Install aborted: Laravel configuration failed")
-        print("\n✗ Installation failed at Laravel configuration step.")
-        db_pass = ""
-        wait_for_enter()
-        return cfg
-
-    # Password no longer needed after Laravel step.
-    db_pass = ""
-
-    # --- Workers (cron + systemd queue worker) ---
-    print(next_step("Configuring cron job and queue worker…"))
-    logger.info("Install: configuring workers for %s", cfg.install_path)
-    from setup.steps.workers import configure_workers
-    if not configure_workers(cfg.install_path):
-        logger.error("Install: workers configuration failed (non-fatal)")
-        print("\n⚠  Warning: worker setup failed – you can configure it manually.")
-
-    logger.info("Install completed successfully: install_path=%s", cfg.install_path)
-    _print_install_summary(cfg.install_path, db_name, db_user)
-
-    wait_for_enter()
-    return cfg
 
 
 def uninstall_menu(installed_extensions: list[str]) -> None:
@@ -659,7 +352,6 @@ def config_menu(cfg: Config) -> Config:
     while True:
         clear_screen()
         print("Config\n")
-        print(f"1. Change release version       [{cfg.selected_release or 'not selected'}]")
         print(f"2. Change install path          [{cfg.install_path}]")
         print(f"3. Show detailed checks         [{'on' if cfg.show_detailed_checks else 'off'}]")
         print(f"4. Text log files               [{'on' if cfg.text_logs_enabled else 'off'}]")
@@ -668,10 +360,7 @@ def config_menu(cfg: Config) -> Config:
         print("0. Back")
 
         choice = input("\nSelect an option: ").strip()
-        if choice == "1":
-            cfg = select_release_menu(cfg)
-            logger.info("Config changed: selected_release = %s", cfg.selected_release)
-        elif choice == "2":
+        if choice == "2":
             cfg = prompt_for_install_path(cfg)
             logger.info("Config changed: install_path = %s", cfg.install_path)
             wait_for_enter()
@@ -725,7 +414,6 @@ def _print_startup_summary(cfg: Config) -> None:
 
     print("─" * 44)
     print(f"  {'Install path':<15}: {cfg.install_path}")
-    print(f"  {'Release':<15}: {cfg.selected_release or 'not selected'}")
     print(f"  {'Text logging':<15}: {'enabled' if cfg.text_logs_enabled else 'disabled'}")
     print(f"  {'Detailed checks':<15}: {'on' if cfg.show_detailed_checks else 'off'}")
     print(f"  {'Backups':<15}: {backup_count} available")
@@ -743,11 +431,6 @@ def main() -> int:
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
     logger.info("Installer started. Panel path: %s", cfg.install_path)
-
-    # Prompt to pick a release version at startup only if one hasn't been selected yet.
-    if not cfg.selected_release:
-        cfg = select_release_menu(cfg)
-
     installed_extensions: list[str] = []
 
     while True:
@@ -766,7 +449,7 @@ def main() -> int:
         choice = input("\nSelect an option: ").strip()
         if choice == "1":
             logger.info("Menu: Install")
-            cfg = install_menu(cfg)
+            install_menu()
         elif choice == "2":
             logger.info("Menu: Uninstall")
             uninstall_menu(installed_extensions)

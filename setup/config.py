@@ -51,6 +51,8 @@ class InstallConfig:
     install_path: Path = field(default_factory=lambda: DEFAULT_INSTALL_PATH)
     db_name: str = DEFAULT_DB_NAME
     db_user: str = DEFAULT_DB_USER
+    selected_release: str = ""
+    selected_release_url: str = ""
     non_interactive: bool = False
     text_logs_enabled: bool = True
 
@@ -72,14 +74,17 @@ def load_config() -> InstallConfig:
         install_path=Path(install_path_str) if install_path_str else DEFAULT_INSTALL_PATH,
         db_name=db_name,
         db_user=db_user,
+        selected_release=str(data.get("selected_release", "")).strip(),
+        selected_release_url=str(data.get("selected_release_url", "")).strip(),
         non_interactive=bool(data.get("non_interactive", False)),
         text_logs_enabled=bool(data.get("text_logs_enabled", True)),
     )
     _logger.debug(
-        "Config loaded: install_path=%s, db_name=%s, db_user=%s",
+        "Config loaded: install_path=%s, db_name=%s, db_user=%s, selected_release=%s",
         cfg.install_path,
         cfg.db_name,
         cfg.db_user,
+        cfg.selected_release,
     )
     return cfg
 
@@ -93,6 +98,8 @@ def save_config(cfg: InstallConfig) -> None:
         f'install_path = "{cfg.install_path}"',
         f'db_name = "{cfg.db_name}"',
         f'db_user = "{cfg.db_user}"',
+        f'selected_release = "{cfg.selected_release}"',
+        f'selected_release_url = "{cfg.selected_release_url}"',
         f"non_interactive = {str(cfg.non_interactive).lower()}",
         f"text_logs_enabled = {str(cfg.text_logs_enabled).lower()}",
     ]
@@ -118,10 +125,11 @@ def save_config(cfg: InstallConfig) -> None:
         raise
 
     _logger.debug(
-        "Config saved: install_path=%s, db_name=%s, db_user=%s",
+        "Config saved: install_path=%s, db_name=%s, db_user=%s, selected_release=%s",
         cfg.install_path,
         cfg.db_name,
         cfg.db_user,
+        cfg.selected_release,
     )
 
 
@@ -183,3 +191,50 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
         cfg.db_user,
     )
     return cfg, db_pass
+
+
+def prompt_for_release(cfg: InstallConfig) -> InstallConfig:
+    """Fetch available GitHub releases and prompt the user to pick one.
+
+    Sets ``cfg.selected_release`` and ``cfg.selected_release_url``, persists
+    them to ``config.toml``, and returns the updated config.
+
+    Falls back to the hard-coded default release URL when the GitHub API is
+    unreachable, so the installer can still proceed offline.
+    """
+    # Deferred import to keep config.py dependency-free at import time.
+    from setup.steps.releases import (
+        DEVELOP_BRANCH_TAG,
+        DEVELOP_REPO_GIT_URL,
+        fetch_releases,
+        get_archive_url,
+        prompt_release_selection,
+    )
+    import urllib.error
+
+    print("\nFetching available M12 Labs releases from GitHub…")
+    try:
+        releases = fetch_releases()
+    except (urllib.error.URLError, OSError) as exc:
+        _logger.warning("Could not fetch releases (%s) – using default URL", exc)
+        print(f"  Warning: could not reach GitHub ({exc}).")
+        print("  Falling back to default release URL.")
+        return cfg
+
+    release = prompt_release_selection(releases)
+    if release is None:
+        # User pressed Back; keep existing selection (or empty = default).
+        print("  No release selected – using previous selection or default.")
+        return cfg
+
+    if release.tag == DEVELOP_BRANCH_TAG:
+        cfg.selected_release = DEVELOP_BRANCH_TAG
+        cfg.selected_release_url = ""
+    else:
+        cfg.selected_release = release.tag
+        cfg.selected_release_url = get_archive_url(release)
+
+    save_config(cfg)
+    _logger.info("Release selected: %s (%s)", cfg.selected_release, cfg.selected_release_url)
+    print(f"  Selected: {release.name}")
+    return cfg

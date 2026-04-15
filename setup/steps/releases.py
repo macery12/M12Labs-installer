@@ -1,4 +1,4 @@
-"""GitHub release fetching, selection, and download for the M12 Labs installer."""
+"""GitHub release fetching, selection, and download for the M12 Labs setup installer."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_logger = logging.getLogger("m12labs")
+_logger = logging.getLogger("m12labs.setup")
 
 _GITHUB_API_URL = "https://api.github.com/repos/macery12/M12Labs/releases"
 _PAGE_SIZE = 10
 
 # Sentinel tag used to represent the develop branch install source.
 DEVELOP_BRANCH_TAG = "develop"
-# Git repository URL – cloned directly (default branch is develop).
+# Git repository URL – cloned directly when develop is selected.
 DEVELOP_REPO_GIT_URL = "https://github.com/macery12/M12Labs.git"
 
 
@@ -107,7 +107,7 @@ def prompt_release_selection(releases: list[Release]) -> Release | None:
         page_items = releases[start : start + _PAGE_SIZE]
 
         print(f"Available M12 Labs versions (page {page + 1}/{total_pages})\n")
-        print("  D. Develop branch (latest source – will be built during install)")
+        print("  D. Develop branch (latest source – will be cloned via git)")
         print()
         for i, release in enumerate(page_items, start=1):
             label = "  [pre-release]" if release.prerelease else ""
