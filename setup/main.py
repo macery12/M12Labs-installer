@@ -103,7 +103,7 @@ def full_install() -> int:
     from setup.config import load_config, prompt_for_db_config, prompt_for_install_path, prompt_for_release
     from setup.log import get_logger, setup_logging
     from setup.steps.deps import install_dependencies
-    from setup.steps.files import clone_panel, download_panel
+    from setup.steps.files import clone_panel, detect_existing_panel, download_panel, read_installed_version
     from setup.steps.releases import DEVELOP_BRANCH_TAG
     from setup.steps.database import setup_database
     from setup.steps.laravel import configure_laravel
@@ -122,6 +122,21 @@ def full_install() -> int:
     # Config and prompts
     cfg = load_config()
     cfg = prompt_for_install_path(cfg)
+
+    # Pre-flight: detect an existing panel installation and offer an update.
+    if detect_existing_panel(cfg.install_path):
+        installed_ver = read_installed_version(cfg.install_path)
+        ver_label = f"v{installed_ver}" if installed_ver else "unknown version"
+        print(f"\n  ⚠  M12Labs panel already detected at {cfg.install_path} ({ver_label}).")
+        print("  Running the installer again will UPDATE the panel to your chosen version.")
+        try:
+            answer = input("  Continue with update? [y/N]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer != "y":
+            print("\nUpdate cancelled – no changes were made.")
+            return 0
+
     cfg = prompt_for_release(cfg)
     cfg, db_pass = prompt_for_db_config(cfg)
 

@@ -13,6 +13,7 @@ target directory itself so only the *parent* must be pre-created.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,6 +31,40 @@ DEFAULT_RELEASE_URL = (
 DEVELOP_REPO_GIT_URL = "https://github.com/macery12/M12Labs.git"
 
 _TARBALL_NAME = "panel.tar.gz"
+
+
+def read_installed_version(install_path: Path) -> str | None:
+    """Return the version string from ``config/app.php``, or ``None`` if unreadable.
+
+    Looks for a line like::
+
+        'version' => '2.0.0-Rc2.6',
+    """
+    app_php = install_path / "config" / "app.php"
+    try:
+        text = app_php.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"['\"]version['\"]\s*=>\s*['\"]([^'\"]+)['\"]", text)
+    return match.group(1) if match else None
+
+
+def detect_existing_panel(install_path: Path) -> bool:
+    """Return ``True`` when an M12Labs panel installation is detected at *install_path*.
+
+    Detection criteria (all must be present):
+    * ``artisan``          – Laravel console entry-point
+    * ``composer.json``    – PHP dependency manifest
+    * ``package.json`` **or** ``.git`` – marks the directory as a genuine panel
+      checkout rather than an arbitrary directory that happens to have a few PHP
+      files in it.
+    """
+    if not install_path.is_dir():
+        return False
+    has_artisan = (install_path / "artisan").exists()
+    has_composer = (install_path / "composer.json").exists()
+    has_marker = (install_path / "package.json").exists() or (install_path / ".git").exists()
+    return has_artisan and has_composer and has_marker
 
 
 def download_panel(
