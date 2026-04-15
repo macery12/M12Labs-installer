@@ -1,30 +1,5 @@
 #!/usr/bin/env python3
-"""M12Labs panel setup – interactive menu-driven installer.
-
-Can be invoked in any of these ways::
-
-    # From the repo root:
-    python3 -m setup.main
-    python3 setup/main.py
-    bash setup.sh
-
-    # From inside the setup/ directory:
-    python3 main.py
-
-Flow:
-  1. Prompt for the panel install directory.
-  2. Inspect the directory and classify it as:
-       - existing install  (.env present + panel files)
-       - partial setup     (panel files present, .env missing)
-       - fresh target      (no panel files; usable for a new install)
-  3. Show menu:  1) Install  2) Update  3) Uninstall  4) Database Tools
-  4. Execute the chosen action.
-
-Security:
-    The database password is NEVER written to ``setup/config.toml`` or
-    to any other file on disk by this module.  It exists only in memory
-    during the run and is written once into the panel's ``.env``.
-"""
+"""M12Labs panel setup – interactive menu-driven installer."""
 
 from __future__ import annotations
 
@@ -35,14 +10,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Ensure the repo root is on sys.path so that setup.* imports work
-# regardless of the current working directory.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-# ─────────────────────────────────────────────────── platform helpers ──── #
+# platform helpers
 
 def _ensure_linux() -> bool:
     if platform.system().lower() != "linux":
@@ -53,12 +26,10 @@ def _ensure_linux() -> bool:
 
 
 def _warn_if_not_privileged() -> None:
-    """Warn the user if they are not running as root or with sudo."""
     try:
         is_root = os.geteuid() == 0
     except AttributeError:
         is_root = False
-
     if not is_root and not shutil.which("sudo"):
         print(
             "\nWarning: you are not running as root and sudo is not available."
@@ -66,13 +37,17 @@ def _warn_if_not_privileged() -> None:
         )
 
 
-# ──────────────────────────────────────────────────── directory prompt ──── #
+def _pause_and_clear() -> None:
+    try:
+        input("\n  Press Enter to continue…")
+    except EOFError:
+        pass
+    os.system("clear")
+
+
+# directory prompt
 
 def _prompt_install_dir(cfg):
-    """Prompt for the panel install directory and persist the choice.
-
-    Returns the updated config object.
-    """
     from setup.config import DEFAULT_INSTALL_PATH, save_config
 
     default = cfg.install_path or DEFAULT_INSTALL_PATH
@@ -86,10 +61,9 @@ def _prompt_install_dir(cfg):
     return cfg
 
 
-# ──────────────────────────────────────────────────── state detection ──── #
+# state detection
 
 def _print_state_banner(install_path: Path, state: str) -> None:
-    """Print a human-readable description of the detected panel state."""
     print()
     if state == "existing":
         from setup.steps.files import read_installed_version
@@ -107,10 +81,9 @@ def _print_state_banner(install_path: Path, state: str) -> None:
             print(f"  • Fresh install target: {install_path} (directory will be created).")
 
 
-# ──────────────────────────────────────────────────────── main menu ──── #
+# main menu
 
 def _show_menu() -> str:
-    """Display the main menu and return the user's choice."""
     print()
     print("  Main Menu:")
     print("  ─────────────────────────────")
@@ -127,10 +100,9 @@ def _show_menu() -> str:
     return choice
 
 
-# ──────────────────────────────────────────── database tools sub-menu ──── #
+# database tools sub-menu
 
 def _db_test_connection(install_path: Path) -> None:
-    """Test the database connection using credentials from the panel's .env."""
     from setup.config import read_db_credentials_from_env
     from setup.steps.database import check_db_connection
     from setup.system import read_env_value
@@ -138,6 +110,7 @@ def _db_test_connection(install_path: Path) -> None:
     env_path = install_path / ".env"
     if not env_path.exists():
         print("  .env file not found – cannot load database credentials.")
+        _pause_and_clear()
         return
 
     creds = read_db_credentials_from_env(env_path)
@@ -146,6 +119,7 @@ def _db_test_connection(install_path: Path) -> None:
 
     if not creds["db_pass"]:
         print("  DB_PASSWORD not found in .env – cannot test connection.")
+        _pause_and_clear()
         return
 
     print(
@@ -167,13 +141,14 @@ def _db_test_connection(install_path: Path) -> None:
             "    Check that MariaDB/MySQL is running and the credentials"
             " in .env are correct."
         )
+    _pause_and_clear()
 
 
 def _db_check_service() -> None:
-    """Optionally check whether the MariaDB service is running (diagnostic only)."""
     print("  Checking MariaDB service status…")
     if not shutil.which("systemctl"):
         print("  systemctl not found – cannot check service status.")
+        _pause_and_clear()
         return
     result = subprocess.run(
         ["systemctl", "status", "mariadb"],
@@ -185,14 +160,13 @@ def _db_check_service() -> None:
     else:
         print("  ✗ MariaDB service does not appear to be running.")
         print("    To start it: sudo systemctl start mariadb")
-    # Show a concise excerpt of the status output for context
     lines = (result.stdout or result.stderr or "").splitlines()
     for line in lines[:10]:
         print(f"    {line}")
+    _pause_and_clear()
 
 
 def _database_tools(install_path: Path) -> None:
-    """Database Tools sub-menu."""
     while True:
         print()
         print("  Database Tools:")
@@ -216,10 +190,9 @@ def _database_tools(install_path: Path) -> None:
             print("  Invalid option. Please enter 1, 2, or b.")
 
 
-# ──────────────────────────────────────────────────── install / update ──── #
+# install / update
 
 def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None:
-    """Print the post-install summary and NGINX / SSL reminders."""
     width = 60
     print("\n" + "─" * width)
     print("  M12Labs panel installation complete!")
@@ -248,11 +221,6 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
 
 
 def _run_install(cfg) -> int:
-    """Run the full interactive install walkthrough.
-
-    Returns:
-        ``0`` on success, ``1`` on failure.
-    """
     from setup.config import prompt_for_db_config, prompt_for_release
     from setup.log import get_logger, setup_logging
     from setup.steps.deps import install_dependencies
@@ -262,7 +230,6 @@ def _run_install(cfg) -> int:
     from setup.steps.laravel import configure_laravel
     from setup.steps.workers import configure_workers
 
-    # If .env already exists, prompt_for_db_config will offer to reuse it.
     cfg = prompt_for_release(cfg)
     cfg, db_pass = prompt_for_db_config(cfg)
 
@@ -285,13 +252,11 @@ def _run_install(cfg) -> int:
 
     install_path: Path = cfg.install_path
 
-    # Step 1: System dependencies
     if not install_dependencies():
         logger.error("Install aborted: Step 1 (dependencies) failed")
         print("\n✗ Installation failed at Step 1. See output above.")
         return 1
 
-    # Step 2: Obtain panel files
     if is_develop:
         if not clone_panel(install_path):
             logger.error("Install aborted: Step 2 (clone) failed")
@@ -302,23 +267,19 @@ def _run_install(cfg) -> int:
         print("\n✗ Installation failed at Step 2. See output above.")
         return 1
 
-    # Step 3: Database setup
     if not setup_database(cfg.db_name, cfg.db_user, db_pass):
         logger.error("Install aborted: Step 3 (database) failed")
         print("\n✗ Installation failed at Step 3. See output above.")
         return 1
 
-    # Step 4: Laravel environment
     if not configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
         logger.error("Install aborted: Step 4 (Laravel) failed")
         print("\n✗ Installation failed at Step 4. See output above.")
         db_pass = ""
         return 1
 
-    # Overwrite the password in memory as soon as it is no longer needed.
     db_pass = ""
 
-    # Step 5: Cron and queue worker
     if not configure_workers(install_path):
         logger.error("Install aborted: Step 5 (workers) failed")
         print("\n✗ Installation failed at Step 5. See output above.")
@@ -330,22 +291,9 @@ def _run_install(cfg) -> int:
 
 
 def _run_update(cfg) -> int:
-    """Run the minimal update flow for an existing panel installation.
-
-    * Loads database credentials from the panel's ``.env`` (does not prompt).
-    * Validates the DB connection before proceeding.
-    * If the connection check fails, the user is directed to Database Tools.
-    * Does NOT prompt the user to modify database credentials.
-
-    Args:
-        cfg: :class:`~setup.config.InstallConfig` with ``install_path`` set.
-
-    Returns:
-        ``0`` on success, ``1`` on failure.
-    """
     from setup.config import read_db_credentials_from_env, prompt_for_release
     from setup.log import get_logger, setup_logging
-    from setup.steps.files import clone_panel, download_panel
+    from setup.steps.files import clone_panel, download_panel, read_installed_version
     from setup.steps.laravel import artisan, update_laravel
     from setup.steps.releases import DEVELOP_BRANCH_TAG
     from setup.steps.database import check_db_connection
@@ -354,7 +302,7 @@ def _run_update(cfg) -> int:
     install_path: Path = cfg.install_path
     env_path = install_path / ".env"
 
-    # ── Validate existing DB credentials before modifying anything ── #
+    # db check before touching anything
     if env_path.exists():
         creds = read_db_credentials_from_env(env_path)
         db_host = read_env_value(env_path, "DB_HOST") or "127.0.0.1"
@@ -374,7 +322,6 @@ def _run_update(cfg) -> int:
             )
             if ok:
                 print("  ✓ Database connection successful.")
-                # Update cfg so logs show the correct DB info
                 if creds["db_name"]:
                     cfg.db_name = creds["db_name"]
                 if creds["db_user"]:
@@ -386,23 +333,39 @@ def _run_update(cfg) -> int:
                     " 'Database Tools' from the main menu."
                 )
                 print("  Update has been cancelled.")
+                _pause_and_clear()
                 return 1
         else:
             print("  Note: DB credentials not found in .env – skipping database check.")
     else:
         print("  Note: .env not found – skipping database check.")
 
-    # ── Confirm before proceeding ── #
-    try:
-        answer = input("\n  Continue with update? [y/N]: ").strip().lower()
-    except EOFError:
-        answer = ""
-    if answer != "y":
-        print("\nUpdate cancelled – no changes were made.")
-        return 0
+    # pause after db check so the user can read the result
+    _pause_and_clear()
 
+    # release selection
+    old_ver = read_installed_version(install_path)
     cfg = prompt_for_release(cfg)
     is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+    new_ver_label = "develop branch" if is_develop else (cfg.selected_release or "latest")
+
+    # confirmation screen
+    width = 60
+    print()
+    print("─" * width)
+    print("  Update confirmation")
+    print("─" * width)
+    print(f"  Install path    : {install_path}")
+    print(f"  Current version : {f'v{old_ver}' if old_ver else 'unknown'}")
+    print(f"  New version     : {new_ver_label}")
+    print("─" * width)
+    print()
+    print("  Press Enter to start the update, or Ctrl+C to cancel.")
+    try:
+        input("  > ")
+    except (EOFError, KeyboardInterrupt):
+        print("\n\nUpdate cancelled – no changes were made.")
+        return 0
 
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
@@ -416,7 +379,7 @@ def _run_update(cfg) -> int:
     print("Starting update.  This will take a few minutes.")
     print()
 
-    # Put the application into maintenance mode (best-effort)
+    # maintenance mode
     print("  Putting application into maintenance mode…")
     if not artisan(install_path, "down"):
         logger.warning("artisan down failed – continuing with update")
@@ -424,7 +387,7 @@ def _run_update(cfg) -> int:
             "  Warning: could not put application into maintenance mode – continuing."
         )
 
-    # Fetch and replace panel files
+    # fetch and replace panel files
     if is_develop:
         if not clone_panel(install_path):
             logger.error("Update aborted: file update (clone) failed")
@@ -445,30 +408,29 @@ def _run_update(cfg) -> int:
             )
         return 1
 
-    # Minimal Laravel refresh (composer, caches, migrations, chown, artisan up)
+    # laravel refresh
     if not update_laravel(install_path):
         logger.error("Update aborted: Laravel refresh failed")
         print("\n✗ Update failed at Laravel refresh step. See output above.")
         return 1
 
+    # read the version now on disk to confirm the update landed
+    installed_ver = read_installed_version(install_path)
+    installed_label = f"v{installed_ver}" if installed_ver else "unknown"
+
     logger.info("Update completed successfully: install_path=%s", install_path)
-    width = 60
     print("\n" + "─" * width)
     print("  M12Labs panel update complete!")
     print("─" * width)
-    print(f"  Install path : {install_path}")
+    print(f"  Install path      : {install_path}")
+    print(f"  Installed version : {installed_label}")
     print("─" * width)
     return 0
 
 
-# ─────────────────────────────────────────────────────── entry point ──── #
+# entry point
 
 def main() -> int:
-    """Main entry point – interactive menu-driven installer.
-
-    Returns:
-        ``0`` on success / clean exit, ``1`` on failure.
-    """
     from setup.config import load_config
     from setup.steps.files import detect_panel_state
 
@@ -482,16 +444,13 @@ def main() -> int:
 
     _warn_if_not_privileged()
 
-    # Step 1: Load persisted config, then prompt for the install directory.
     cfg = load_config()
     cfg = _prompt_install_dir(cfg)
     install_path: Path = cfg.install_path
 
-    # Step 2: Detect what already exists at the chosen path.
     state = detect_panel_state(install_path)
     _print_state_banner(install_path, state)
 
-    # Step 3: Menu loop.
     while True:
         choice = _show_menu()
 
@@ -525,4 +484,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
