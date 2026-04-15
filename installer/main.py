@@ -33,6 +33,8 @@ from check import (
 from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
 from log import get_logger, setup_logging
 from releases import (
+    DEVELOP_BRANCH_TAG,
+    DEVELOP_BRANCH_URL,
     Release,
     download_archive,
     extract_archive,
@@ -113,9 +115,14 @@ def select_release_menu(cfg: Config) -> Config:
     logger.info("Release selected: '%s'", selected.tag)
 
     cfg.selected_release = selected.tag
-    cfg.selected_release_url = get_archive_url(selected)
-    save_config(cfg)
-    print(f"\n✓ Release {selected.tag} selected and saved.")
+    if selected.tag == DEVELOP_BRANCH_TAG:
+        cfg.selected_release_url = DEVELOP_BRANCH_URL
+        save_config(cfg)
+        print("\n✓ Develop branch selected – will build from source during install.")
+    else:
+        cfg.selected_release_url = get_archive_url(selected)
+        save_config(cfg)
+        print(f"\n✓ Release {selected.tag} selected and saved.")
     wait_for_enter()
     return cfg
 
@@ -191,7 +198,11 @@ def _print_install_summary(install_path: Path, db_name: str, db_user: str) -> No
 
 
 def install_menu(cfg: Config) -> Config:
-    """Full install: download → extract → copy → deps → build → DB → Laravel → workers."""
+    """Full install: download → extract → copy → deps → [build] → DB → Laravel → workers.
+
+    The pnpm build step is only run when the source is the develop branch.
+    Release archives (tar.gz / zip) are pre-built and skip that step.
+    """
     logger = get_logger()
     clear_screen()
     print("Install M12 Labs\n")
@@ -207,11 +218,17 @@ def install_menu(cfg: Config) -> Config:
         wait_for_enter()
         return cfg
 
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+    total_steps = 6 if is_develop else 5
+
     archive_url = cfg.selected_release_url
-    filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.zip"
+    filename = Path(urllib.parse.urlparse(archive_url).path).name or f"m12labs-{cfg.selected_release}.tar.gz"
     dest_dir = cfg.install_path.parent / "m12labs-downloads"
 
-    print(f"  Release:  {cfg.selected_release}")
+    if is_develop:
+        print("  Source:   develop branch (will build from source)")
+    else:
+        print(f"  Release:  {cfg.selected_release}")
     print(f"  Archive:  {filename}")
     print(f"  Save to:  {dest_dir}/")
     print(f"  Install:  {cfg.install_path}/\n")
@@ -226,8 +243,15 @@ def install_menu(cfg: Config) -> Config:
     # Collect DB config upfront before any long-running work.
     db_name, db_user, db_pass = _prompt_db_config()
 
+    step = 0
+
+    def next_step(label: str) -> str:
+        nonlocal step
+        step += 1
+        return f"\n[{step}/{total_steps}] {label}"
+
     # --- Download ---
-    print("\n[1/6] Downloading release archive…")
+    print(next_step("Downloading archive…"))
     try:
         dest_path = download_archive(archive_url, dest_dir, filename)
         logger.info("Install: archive downloaded to %s", dest_path)
@@ -240,7 +264,7 @@ def install_menu(cfg: Config) -> Config:
         return cfg
 
     # --- Extract & Copy ---
-    print("\n[2/6] Extracting and copying files…")
+    print(next_step("Extracting and copying files…"))
     tmp_dir = Path(tempfile.mkdtemp(prefix="m12labs-extract-"))
     try:
         try:
@@ -273,7 +297,7 @@ def install_menu(cfg: Config) -> Config:
     _set_panel_permissions(cfg.install_path)
 
     # --- System dependencies (PHP, MariaDB, NGINX, Redis, Composer) ---
-    print("\n[3/6] Installing system dependencies…")
+    print(next_step("Installing system dependencies…"))
     logger.info("Install: installing system dependencies")
     from setup.steps.deps import install_dependencies
     if not install_dependencies():
@@ -283,13 +307,14 @@ def install_menu(cfg: Config) -> Config:
         wait_for_enter()
         return cfg
 
-    # --- Frontend build (pnpm) ---
-    print("\n[4/6] Building frontend assets…")
-    logger.info("Install: starting pnpm build for %s", cfg.install_path)
-    run_build_only(cfg.install_path)
+    # --- Frontend build (develop branch only – releases are pre-built) ---
+    if is_develop:
+        print(next_step("Building frontend assets (develop branch)…"))
+        logger.info("Install: starting pnpm build for %s", cfg.install_path)
+        run_build_only(cfg.install_path)
 
     # --- Database ---
-    print("\n[5/6] Setting up database…")
+    print(next_step("Setting up database…"))
     logger.info("Install: setting up database db_name=%s db_user=%s", db_name, db_user)
     from setup.steps.database import setup_database
     if not setup_database(db_name, db_user, db_pass):
@@ -300,7 +325,7 @@ def install_menu(cfg: Config) -> Config:
         return cfg
 
     # --- Laravel (composer install, .env, artisan commands, user creation) ---
-    print("\n[6/6] Configuring Laravel environment…")
+    print(next_step("Configuring Laravel environment…"))
     logger.info("Install: configuring Laravel at %s", cfg.install_path)
     from setup.steps.laravel import configure_laravel
     if not configure_laravel(cfg.install_path, db_name, db_user, db_pass):
@@ -314,7 +339,7 @@ def install_menu(cfg: Config) -> Config:
     db_pass = ""
 
     # --- Workers (cron + systemd queue worker) ---
-    print("\nConfiguring cron job and queue worker…")
+    print(next_step("Configuring cron job and queue worker…"))
     logger.info("Install: configuring workers for %s", cfg.install_path)
     from setup.steps.workers import configure_workers
     if not configure_workers(cfg.install_path):

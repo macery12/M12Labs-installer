@@ -16,6 +16,13 @@ _logger = logging.getLogger("m12labs")
 _GITHUB_API_URL = "https://api.github.com/repos/macery12/M12Labs/releases"
 _PAGE_SIZE = 10
 
+# Sentinel tag used to represent the develop branch install source.
+DEVELOP_BRANCH_TAG = "develop"
+# Direct GitHub archive for the develop branch (always unbuilt source).
+DEVELOP_BRANCH_URL = (
+    "https://github.com/macery12/M12Labs/archive/refs/heads/develop.tar.gz"
+)
+
 
 @dataclass
 class Release:
@@ -91,6 +98,8 @@ def prompt_release_selection(releases: list[Release]) -> Release | None:
     """Display available releases and let the user pick one.
 
     Returns the selected :class:`Release`, or ``None`` when the user goes back.
+    Choosing "D" returns a synthetic Release with :data:`DEVELOP_BRANCH_TAG` so
+    the caller can detect that the develop branch was requested.
     """
     page = 0
     total_pages = max(1, (len(releases) - 1) // _PAGE_SIZE + 1)
@@ -100,6 +109,8 @@ def prompt_release_selection(releases: list[Release]) -> Release | None:
         page_items = releases[start : start + _PAGE_SIZE]
 
         print(f"Available M12 Labs versions (page {page + 1}/{total_pages})\n")
+        print("  D. Develop branch (latest source – will be built during install)")
+        print()
         for i, release in enumerate(page_items, start=1):
             label = "  [pre-release]" if release.prerelease else ""
             print(f"  {i}. {release.name}{label}")
@@ -118,6 +129,12 @@ def prompt_release_selection(releases: list[Release]) -> Release | None:
 
         if choice == "b":
             return None
+        if choice == "d":
+            return Release(
+                tag=DEVELOP_BRANCH_TAG,
+                name="develop branch",
+                prerelease=True,
+            )
         if choice == "n" and "n" in options:
             page += 1
             continue
