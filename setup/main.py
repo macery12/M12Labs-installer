@@ -14,10 +14,11 @@ Can be invoked in any of these ways::
 The installer will:
   1. Verify the platform is Linux.
   2. Load (or create) ``setup/config.toml`` with sensible defaults.
-  3. Interactively prompt for the panel install path, DB name, DB user,
-     and DB password (the password is held in memory only – never saved).
-  4. Execute each install step in order, printing live progress.
-  5. Print a final summary with NGINX / SSL reminders.
+  3. Prompt for the panel install path.
+  4. Prompt to select a release version (or develop branch).
+  5. Prompt for DB name, DB user, and DB password (password held in memory only).
+  6. Execute each install step in order, printing live progress.
+  7. Print a final summary with NGINX / SSL reminders.
 
 Security:
     The database password is NEVER written to ``setup/config.toml`` or
@@ -99,10 +100,11 @@ def full_install() -> int:
     """
     # Deferred imports keep startup fast and allow the platform guard to run
     # before any setup-module code is imported.
-    from setup.config import InstallConfig, load_config, prompt_for_db_config, prompt_for_install_path
+    from setup.config import load_config, prompt_for_db_config, prompt_for_install_path, prompt_for_release
     from setup.log import get_logger, setup_logging
     from setup.steps.deps import install_dependencies
-    from setup.steps.files import download_panel
+    from setup.steps.files import clone_panel, detect_existing_panel, download_panel, read_installed_version
+    from setup.steps.releases import DEVELOP_BRANCH_TAG
     from setup.steps.database import setup_database
     from setup.steps.laravel import configure_laravel
     from setup.steps.workers import configure_workers
@@ -118,16 +120,35 @@ def full_install() -> int:
     _warn_if_not_privileged()
 
     # Config and prompts
-    cfg: InstallConfig = load_config()
+    cfg = load_config()
     cfg = prompt_for_install_path(cfg)
+
+    # Pre-flight: detect an existing panel installation and offer an update.
+    if detect_existing_panel(cfg.install_path):
+        installed_ver = read_installed_version(cfg.install_path)
+        ver_label = f"v{installed_ver}" if installed_ver else "unknown version"
+        print(f"\n  ⚠  M12Labs panel already detected at {cfg.install_path} ({ver_label}).")
+        print("  Running the installer again will UPDATE the panel to your chosen version.")
+        try:
+            answer = input("  Continue with update? [y/N]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer != "y":
+            print("\nUpdate cancelled – no changes were made.")
+            return 0
+
+    cfg = prompt_for_release(cfg)
     cfg, db_pass = prompt_for_db_config(cfg)
+
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
 
     # Logging (after install_path is known)
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
     logger.info(
-        "Install started: install_path=%s, db_name=%s, db_user=%s",
+        "Install started: install_path=%s, release=%s, db_name=%s, db_user=%s",
         cfg.install_path,
+        cfg.selected_release or "(default)",
         cfg.db_name,
         cfg.db_user,
     )
@@ -145,8 +166,13 @@ def full_install() -> int:
         print("\n✗ Installation failed at Step 1. See output above.")
         return 1
 
-    # Step 2: Download panel files
-    if not download_panel(install_path):
+    # Step 2: Obtain panel files
+    if is_develop:
+        if not clone_panel(install_path):
+            logger.error("Install aborted: Step 2 (clone) failed")
+            print("\n✗ Installation failed at Step 2. See output above.")
+            return 1
+    elif not download_panel(install_path, release_url=cfg.selected_release_url or None):
         logger.error("Install aborted: Step 2 (download) failed")
         print("\n✗ Installation failed at Step 2. See output above.")
         return 1
