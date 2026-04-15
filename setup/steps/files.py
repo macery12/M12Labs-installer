@@ -103,7 +103,43 @@ def download_panel(
     except OSError:
         logger.debug("Could not remove tarball %s – skipping", tarball_path)
 
-    # Permissions
+    _set_permissions(install_path, logger)
+    logger.info("Step 2 complete: panel files extracted to %s", install_path)
+    print("  ✓ Panel files downloaded and extracted.")
+    return True
+
+
+def _is_git_repo(path: Path) -> bool:
+    """Return ``True`` if *path* contains an initialised git repository."""
+    return (path / ".git").exists()
+
+
+def _dir_is_empty(path: Path) -> bool:
+    """Return ``True`` if *path* exists but contains no entries."""
+    try:
+        return not any(True for _ in path.iterdir())
+    except OSError:
+        return False
+
+
+def _remove_dir(path: Path, logger) -> bool:
+    """Remove *path* recursively, trying sudo if a plain rmtree fails."""
+    try:
+        shutil.rmtree(path)
+        logger.debug("Removed directory: %s", path)
+        return True
+    except OSError as exc:
+        logger.warning("rmtree failed (%s) – trying with privilege", exc)
+        rm_cmd = with_privilege(["rm", "-rf", str(path)])
+        if rm_cmd and run_command_no_cwd(rm_cmd):
+            logger.debug("Removed directory (privileged): %s", path)
+            return True
+        logger.error("Could not remove directory: %s", path)
+        return False
+
+
+def _set_permissions(install_path: Path, logger) -> None:
+    """Apply ``755`` permissions on storage dirs and ``www-data`` ownership."""
     print("  Setting file permissions…")
     for rel_dir in ("storage", "bootstrap/cache"):
         target = install_path / rel_dir
@@ -112,7 +148,6 @@ def download_panel(
             if chmod_cmd:
                 run_command_no_cwd(chmod_cmd)
 
-    # Ownership
     print("  Setting ownership to www-data:www-data…")
     chown_cmd = with_privilege(
         ["chown", "-R", "www-data:www-data", str(install_path)]
@@ -122,10 +157,6 @@ def download_panel(
             logger.warning("chown failed – continuing")
             print("  Warning: could not set www-data ownership.")
 
-    logger.info("Step 2 complete: panel files extracted to %s", install_path)
-    print("  ✓ Panel files downloaded and extracted.")
-    return True
-
 
 def clone_panel(
     install_path: Path,
@@ -134,15 +165,16 @@ def clone_panel(
 ) -> bool:
     """Clone the M12Labs panel repository into *install_path* (develop channel).
 
-    ``git clone`` creates the target directory itself, so only the *parent*
-    must exist beforehand.  Pre-creating *install_path* would cause git to
-    refuse with "destination path already exists and is not an empty directory".
+    Handles all install-path pre-flight cases so ``git clone`` never sees a
+    non-empty destination:
 
-    Steps:
-        1. Ensure the parent of *install_path* exists.
-        2. ``git clone --depth 1 --branch <branch> <repo_url> <install_path>``.
-        3. Set ``755`` permissions on ``storage/`` and ``bootstrap/cache/``.
-        4. Set ``www-data:www-data`` ownership on *install_path*.
+    * **Does not exist** – normal clone (git creates the directory).
+    * **Exists, empty** – directory is removed so git creates it cleanly.
+    * **Exists, non-empty, already a git repo** – ``git fetch`` + ``git reset
+      --hard`` to bring it to the latest state of *branch* without re-cloning.
+    * **Exists, non-empty, not a git repo** – the user is prompted to confirm
+      wiping the directory before cloning.  If they decline, the step is
+      aborted gracefully.
 
     Returns ``True`` on success, ``False`` on the first failure.
     """
@@ -155,7 +187,76 @@ def clone_panel(
         logger.error("git not found")
         return False
 
-    # Only the parent needs to exist; git clone owns the target directory.
+    # ------------------------------------------------------------------ #
+    # Pre-flight: handle existing install_path
+    # ------------------------------------------------------------------ #
+    if install_path.exists():
+        if _dir_is_empty(install_path):
+            # git clone still refuses an empty directory on some versions;
+            # remove it so git can create it itself.
+            logger.debug("install_path exists but is empty – removing before clone")
+            if not _remove_dir(install_path, logger):
+                print(f"  ERROR: could not clear empty directory {install_path}")
+                return False
+
+        elif _is_git_repo(install_path):
+            # Already cloned – pull to latest instead of re-cloning.
+            print(f"  Directory {install_path} already contains a git repository.")
+            print(f"  Updating to latest {branch} branch instead of re-cloning…")
+            logger.info("install_path already a git repo – updating in place")
+
+            fetch_result = subprocess.run(
+                ["git", "fetch", "--depth", "1", "origin", branch],
+                cwd=install_path,
+                capture_output=True,
+                text=True,
+            )
+            if fetch_result.returncode != 0:
+                msg = fetch_result.stderr.strip() or "git fetch failed"
+                logger.error("git fetch failed: %s", msg)
+                print(f"  ERROR: {msg}")
+                return False
+
+            reset_result = subprocess.run(
+                ["git", "reset", "--hard", f"origin/{branch}"],
+                cwd=install_path,
+                capture_output=True,
+                text=True,
+            )
+            if reset_result.returncode != 0:
+                msg = reset_result.stderr.strip() or "git reset failed"
+                logger.error("git reset failed: %s", msg)
+                print(f"  ERROR: {msg}")
+                return False
+
+            logger.info("git update complete: %s", install_path)
+            print(f"  ✓ Updated {branch} branch at {install_path}")
+            _set_permissions(install_path, logger)
+            logger.info("Step 2 complete: panel updated at %s", install_path)
+            print("  ✓ Panel repository updated.")
+            return True
+
+        else:
+            # Non-empty directory that is NOT a git repo – ask the user.
+            print(f"\n  WARNING: {install_path} already exists and is not empty.")
+            print("  Continuing will PERMANENTLY DELETE all files in that directory.")
+            try:
+                answer = input("  Wipe directory and re-clone? [y/N]: ").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer != "y":
+                print("  Aborted – install_path was not modified.")
+                logger.warning("User declined to wipe %s – aborting clone", install_path)
+                return False
+            print(f"  Removing {install_path} …")
+            if not _remove_dir(install_path, logger):
+                print(f"  ERROR: could not remove {install_path}")
+                return False
+            logger.info("Removed existing install_path: %s", install_path)
+
+    # ------------------------------------------------------------------ #
+    # Ensure the parent directory exists; git clone creates install_path.
+    # ------------------------------------------------------------------ #
     try:
         install_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -191,26 +292,7 @@ def clone_panel(
 
     logger.info("git clone complete: %s", install_path)
     print(f"  ✓ Cloned {branch} branch to {install_path}")
-
-    # Permissions
-    print("  Setting file permissions…")
-    for rel_dir in ("storage", "bootstrap/cache"):
-        target = install_path / rel_dir
-        if target.exists():
-            chmod_cmd = with_privilege(["chmod", "-R", "755", str(target)])
-            if chmod_cmd:
-                run_command_no_cwd(chmod_cmd)
-
-    # Ownership
-    print("  Setting ownership to www-data:www-data…")
-    chown_cmd = with_privilege(
-        ["chown", "-R", "www-data:www-data", str(install_path)]
-    )
-    if chown_cmd:
-        if not run_command_no_cwd(chown_cmd):
-            logger.warning("chown failed – continuing")
-            print("  Warning: could not set www-data ownership.")
-
+    _set_permissions(install_path, logger)
     logger.info("Step 2 complete: panel cloned to %s", install_path)
     print("  ✓ Panel repository cloned.")
     return True
