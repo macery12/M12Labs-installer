@@ -265,7 +265,8 @@ def install_menu(cfg: Config) -> Config:
         # --- Git clone ---
         print(next_step("Cloning develop branch…"))
         logger.info("Install: git clone %s -> %s", DEVELOP_REPO_GIT_URL, cfg.install_path)
-        cfg.install_path.mkdir(parents=True, exist_ok=True)
+        # Ensure the *parent* directory exists; git clone creates the target dir itself.
+        cfg.install_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             result = subprocess.run(
                 [
