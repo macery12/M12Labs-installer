@@ -49,6 +49,26 @@ def read_installed_version(install_path: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def detect_panel_state(install_path: Path) -> str:
+    """Return a string describing the state of *install_path*.
+
+    Returns:
+        ``"existing"``  – ``.env`` is present **and** panel files are present.
+        ``"partial"``   – panel files present but ``.env`` is missing.
+        ``"fresh"``     – no panel files found (usable as a fresh install target).
+    """
+    if not install_path.is_dir():
+        return "fresh"
+
+    has_artisan = (install_path / "artisan").exists()
+    has_pkg = (install_path / "package.json").exists()
+    has_env = (install_path / ".env").exists()
+
+    if has_artisan or has_pkg:
+        return "existing" if has_env else "partial"
+    return "fresh"
+
+
 def detect_existing_panel(install_path: Path) -> bool:
     """Return ``True`` when an M12Labs panel installation is detected at *install_path*.
 
