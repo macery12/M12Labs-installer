@@ -133,6 +133,29 @@ def save_config(cfg: InstallConfig) -> None:
     )
 
 
+def read_db_credentials_from_env(env_path: Path) -> dict[str, str]:
+    """Read DB_DATABASE, DB_USERNAME, and DB_PASSWORD from an existing ``.env`` file.
+
+    Returns a dict with keys ``db_name``, ``db_user``, and ``db_pass``.
+    Values are empty strings when the key is absent or the file cannot be read.
+
+    **Security:** This function reads the password into memory to allow the
+    caller to decide whether to reuse it.  The value is never persisted to
+    disk by this function.
+    """
+    from setup.system import read_env_value
+
+    def _get(key: str) -> str:
+        value = read_env_value(env_path, key)
+        return value if value is not None else ""
+
+    return {
+        "db_name": _get("DB_DATABASE"),
+        "db_user": _get("DB_USERNAME"),
+        "db_pass": _get("DB_PASSWORD"),
+    }
+
+
 def generate_db_password(length: int = 24) -> str:
     """Generate a cryptographically secure random database password.
 
@@ -157,6 +180,11 @@ def prompt_for_install_path(cfg: InstallConfig) -> InstallConfig:
 def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
     """Prompt for DB name/user (persisted) and password (in memory only).
 
+    Before prompting, checks whether an ``.env`` already exists at the
+    install path.  If it contains a non-empty ``DB_PASSWORD`` the user is
+    offered the option to reuse the existing credentials instead of
+    supplying new ones.
+
     Returns:
         A tuple of ``(updated_config, db_pass_plaintext)``.
 
@@ -165,6 +193,33 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
     the install steps and not persisting it anywhere.
     """
     print("\nDatabase configuration:")
+
+    # Check for existing credentials in .env
+    env_path = cfg.install_path / ".env"
+    existing = read_db_credentials_from_env(env_path)
+    if existing["db_pass"]:
+        print(f"  Existing DB credentials found in {env_path}:")
+        print(f"    DB name : {existing['db_name'] or '(empty)'}")
+        print(f"    DB user : {existing['db_user'] or '(empty)'}")
+        print("    DB pass : (hidden)")
+        try:
+            answer = input("  Reuse existing DB credentials? [Y/n]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer in ("", "y"):
+            if existing["db_name"]:
+                cfg.db_name = existing["db_name"]
+            if existing["db_user"]:
+                cfg.db_user = existing["db_user"]
+            save_config(cfg)
+            _logger.info(
+                "Reusing existing DB credentials from %s: db_name=%s, db_user=%s",
+                env_path,
+                cfg.db_name,
+                cfg.db_user,
+            )
+            print("  Reusing existing DB credentials.")
+            return cfg, existing["db_pass"]
 
     raw_name = input(f"  DB name   [default: {cfg.db_name}]: ").strip()
     if raw_name:

@@ -92,6 +92,85 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
     print("─" * width)
 
 
+def _run_update(cfg) -> int:
+    """Run the minimal update flow for an existing panel installation.
+
+    Does NOT install system dependencies or create the database / admin user.
+    Instead it:
+
+    1. Prompts for a release to pull.
+    2. Puts the application in maintenance mode.
+    3. Fetches and replaces the panel files.
+    4. Runs :func:`~setup.steps.laravel.update_laravel` (composer, cache
+       clear, migrations, chown, artisan up).
+
+    Args:
+        cfg: :class:`~setup.config.InstallConfig` with ``install_path``
+             already set.
+
+    Returns:
+        ``0`` on success, ``1`` on failure.
+    """
+    from setup.config import prompt_for_release
+    from setup.log import get_logger, setup_logging
+    from setup.steps.files import clone_panel, download_panel
+    from setup.steps.laravel import artisan, update_laravel
+    from setup.steps.releases import DEVELOP_BRANCH_TAG
+
+    cfg = prompt_for_release(cfg)
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+
+    setup_logging(cfg.install_path, cfg.text_logs_enabled)
+    logger = get_logger()
+    logger.info(
+        "Update started: install_path=%s, release=%s",
+        cfg.install_path,
+        cfg.selected_release or "(default)",
+    )
+
+    print()
+    print("Starting update.  This will take a few minutes.")
+    print()
+
+    install_path: Path = cfg.install_path
+
+    # Put the application into maintenance mode (best-effort)
+    print("  Putting application into maintenance mode…")
+    if not artisan(install_path, "down"):
+        logger.warning("artisan down failed – continuing with update")
+        print("  Warning: could not put application into maintenance mode – continuing.")
+
+    # Fetch and replace panel files
+    if is_develop:
+        if not clone_panel(install_path):
+            logger.error("Update aborted: file update (clone) failed")
+            print("\n✗ Update failed at file download step. See output above.")
+            if not artisan(install_path, "up"):
+                print("  Warning: could not bring application back online – run `php artisan up` manually.")
+            return 1
+    elif not download_panel(install_path, release_url=cfg.selected_release_url or None):
+        logger.error("Update aborted: file download failed")
+        print("\n✗ Update failed at file download step. See output above.")
+        if not artisan(install_path, "up"):
+            print("  Warning: could not bring application back online – run `php artisan up` manually.")
+        return 1
+
+    # Minimal Laravel refresh (composer, caches, migrations, chown, artisan up)
+    if not update_laravel(install_path):
+        logger.error("Update aborted: Laravel refresh failed")
+        print("\n✗ Update failed at Laravel refresh step. See output above.")
+        return 1
+
+    logger.info("Update completed successfully: install_path=%s", install_path)
+    width = 60
+    print("\n" + "─" * width)
+    print("  M12Labs panel update complete!")
+    print("─" * width)
+    print(f"  Install path : {install_path}")
+    print("─" * width)
+    return 0
+
+
 def full_install() -> int:
     """Run the complete interactive panel install walkthrough.
 
@@ -136,6 +215,8 @@ def full_install() -> int:
         if answer != "y":
             print("\nUpdate cancelled – no changes were made.")
             return 0
+        # Run the minimal update flow; skip the full install.
+        return _run_update(cfg)
 
     cfg = prompt_for_release(cfg)
     cfg, db_pass = prompt_for_db_config(cfg)
