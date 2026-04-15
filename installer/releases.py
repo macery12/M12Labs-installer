@@ -67,7 +67,6 @@ def fetch_releases() -> list[Release]:
             Release(
                 tag=tag,
                 name=name,
-                description=_first_line(body),
                 prerelease=bool(item.get("prerelease", False)),
                 assets=item.get("assets", []),
                 zipball_url=item.get("zipball_url", ""),
