@@ -92,10 +92,11 @@ def _show_menu() -> str:
     print("  3) Uninstall  (coming soon)")
     print("  4) Database Tools")
     print("  5) Webserver")
+    print("  6) Manage Backups")
     print("  q) Quit")
     print()
     try:
-        choice = input("  Select an option [1/2/3/4/5/q]: ").strip().lower()
+        choice = input("  Select an option [1/2/3/4/5/6/q]: ").strip().lower()
     except EOFError:
         choice = "q"
     return choice
@@ -214,6 +215,213 @@ def _webserver_menu(install_path: Path) -> None:
             break
         else:
             print("  Invalid option. Please enter 1 or 0.")
+
+
+# backup prompt
+
+def _prompt_backup_before_update(install_path: Path) -> bool:
+    """Prompt the user to create a backup before updating.
+
+    Returns True if the update should proceed, False if it should be
+    aborted.
+    """
+    from installer.backup.backup import create_backup, DEFAULT_BACKUPS_DIR
+
+    print()
+    print("  ─────────────────────────────────────────────────────")
+    print("  ⚠  Backup recommended")
+    print("  ─────────────────────────────────────────────────────")
+    print("  It is strongly recommended to create a backup of the")
+    print("  panel before updating, in case something goes wrong.")
+    print()
+
+    try:
+        answer = input(
+            "  Would you like to back up now? [Y/n]: "
+        ).strip().lower()
+    except EOFError:
+        answer = "y"
+
+    wants_backup = answer in ("", "y", "yes")
+
+    if wants_backup:
+        print(f"\n  Creating backup in {DEFAULT_BACKUPS_DIR} …")
+        try:
+            archive = create_backup(install_path)
+            print(f"  ✓ Backup created: {archive}")
+            print()
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            print()
+            print(f"  ✗ Backup failed: {exc}")
+            print("    (Check disk space, permissions, and that the install path exists.)")
+            print()
+            try:
+                proceed = input(
+                    "  The backup could not be created. Continue without a backup? [y/N]: "
+                ).strip().lower()
+            except EOFError:
+                proceed = "n"
+
+            if proceed not in ("y", "yes"):
+                print("  Update cancelled. Please resolve the backup issue first.")
+                return False
+            print()
+            return True
+
+    # User declined – ask for explicit confirmation
+    print("  Continuing without a backup may be risky.")
+    print("  If the update fails you may not be able to rollback easily.")
+    print()
+    try:
+        confirm = input(
+            "  Are you sure you want to continue WITHOUT a backup? [y/N]: "
+        ).strip().lower()
+    except EOFError:
+        confirm = "n"
+
+    if confirm not in ("y", "yes"):
+        print("\n  Update cancelled.")
+        return False
+
+    print()
+    return True
+
+
+# manage backups sub-menu
+
+def _fmt_size(num_bytes: int) -> str:
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _fmt_backup_label(path: "Path") -> str:
+    """Return a human-readable label for a backup archive.
+
+    Parses the ``YYYYMMDD_HHMMSS`` stamp embedded in the filename and
+    formats it as ``YYYY-MM-DD HH:MM:SS UTC``.  Falls back to the raw
+    filename if the stamp cannot be parsed.
+    """
+    import re, datetime as _dt
+    m = re.search(r"(\d{8})_(\d{6})", path.stem)
+    if m:
+        try:
+            dt = _dt.datetime.strptime(
+                f"{m.group(1)}_{m.group(2)}", "%Y%m%d_%H%M%S"
+            ).replace(tzinfo=_dt.timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except ValueError:
+            pass
+    return path.name
+
+
+def _manage_backups_menu(install_path: Path) -> None:
+    from installer.backup.backup import (
+        DEFAULT_BACKUPS_DIR,
+        delete_backup,
+        list_backups,
+        restore_backup,
+    )
+
+    while True:
+        backups = list_backups()
+
+        print()
+        print("  Manage Backups:")
+        print("  ─────────────────────────────")
+
+        if not backups:
+            print(f"  No backups found in {DEFAULT_BACKUPS_DIR}")
+        else:
+            print(f"  Stored in: {DEFAULT_BACKUPS_DIR}")
+            print()
+            for idx, path in enumerate(backups, start=1):
+                size = _fmt_size(path.stat().st_size)
+                label = _fmt_backup_label(path)
+                print(f"  {idx}) {label}  ({size})")
+
+        print()
+        print("  d) Delete a backup")
+        print("  r) Restore a backup")
+        print("  b) Back to main menu")
+        print()
+
+        try:
+            choice = input("  Select an option: ").strip().lower()
+        except EOFError:
+            break
+
+        if choice in ("b", "back", "q"):
+            break
+
+        elif choice == "d":
+            if not backups:
+                print("  No backups to delete.")
+                continue
+            try:
+                raw = input(
+                    f"  Enter backup number to delete [1-{len(backups)}]: "
+                ).strip()
+            except EOFError:
+                continue
+            if not raw.isdigit() or not (1 <= int(raw) <= len(backups)):
+                print("  Invalid selection.")
+                continue
+            target = backups[int(raw) - 1]
+            try:
+                confirm = input(
+                    f"  Delete {target.name}? [y/N]: "
+                ).strip().lower()
+            except EOFError:
+                confirm = "n"
+            if confirm in ("y", "yes"):
+                delete_backup(target)
+                print(f"  ✓ Deleted {target.name}")
+            else:
+                print("  Deletion cancelled.")
+
+        elif choice == "r":
+            if not backups:
+                print("  No backups available to restore.")
+                continue
+            try:
+                raw = input(
+                    f"  Enter backup number to restore [1-{len(backups)}]: "
+                ).strip()
+            except EOFError:
+                continue
+            if not raw.isdigit() or not (1 <= int(raw) <= len(backups)):
+                print("  Invalid selection.")
+                continue
+            target = backups[int(raw) - 1]
+            print()
+            print(f"  ⚠  This will overwrite the current panel at {install_path}")
+            print(f"     with the contents of {target.name}.")
+            print()
+            try:
+                confirm = input(
+                    "  Are you sure you want to restore this backup? [y/N]: "
+                ).strip().lower()
+            except EOFError:
+                confirm = "n"
+            if confirm not in ("y", "yes"):
+                print("  Restore cancelled.")
+                continue
+            print(f"\n  Restoring {target.name} …")
+            try:
+                restore_backup(target, install_path)
+                print("  ✓ Restore complete.")
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"  ✗ Restore failed: {exc}")
+                print("    (Check permissions and available disk space.)")
+            _pause_and_clear()
+
+        else:
+            print("  Invalid option. Please enter d, r, or b.")
 
 
 # install / update
@@ -369,6 +577,10 @@ def _run_update(cfg) -> int:
     # pause after db check so the user can read the result
     _pause_and_clear()
 
+    # backup prompt
+    if not _prompt_backup_before_update(install_path):
+        return 0
+
     # release selection
     old_ver = read_installed_version(install_path)
     cfg = prompt_for_release(cfg)
@@ -408,10 +620,18 @@ def _run_update(cfg) -> int:
     # maintenance mode
     print("  Putting application into maintenance mode…")
     if not artisan(install_path, "down"):
-        logger.warning("artisan down failed – continuing with update")
+        logger.error("Update aborted: could not put application into maintenance mode")
         print(
-            "  Warning: could not put application into maintenance mode – continuing."
+            "\n✗ Update aborted: could not put application into maintenance mode."
         )
+        print(
+            "  The application may already be down or PHP/artisan is unavailable."
+        )
+        print(
+            "  Resolve the issue and try again, or run `php artisan down` manually"
+            " before retrying."
+        )
+        return 1
 
     # fetch and replace panel files
     if is_develop:
@@ -503,12 +723,15 @@ def main() -> int:
         elif choice == "5":
             _webserver_menu(install_path)
 
+        elif choice == "6":
+            _manage_backups_menu(install_path)
+
         elif choice in ("q", "quit", "exit"):
             print("\nExiting installer. No changes were made.")
             return 0
 
         else:
-            print("  Invalid option. Please enter 1, 2, 3, 4, 5, or q.")
+            print("  Invalid option. Please enter 1, 2, 3, 4, 5, 6, or q.")
 
 
 if __name__ == "__main__":
