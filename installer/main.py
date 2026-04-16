@@ -216,6 +216,83 @@ def _webserver_menu(install_path: Path) -> None:
             print("  Invalid option. Please enter 1 or 0.")
 
 
+# backup prompt
+
+def _prompt_backup_before_update(install_path: Path) -> bool:
+    """Prompt the user to create a backup before updating.
+
+    Returns True if the update should proceed, False if it should be
+    aborted.
+    """
+    from installer.backup.backup import create_backup
+
+    print()
+    print("  ─────────────────────────────────────────────────────")
+    print("  ⚠  Backup recommended")
+    print("  ─────────────────────────────────────────────────────")
+    print("  It is strongly recommended to create a backup of the")
+    print("  panel before updating, in case something goes wrong.")
+    print()
+
+    try:
+        answer = input(
+            "  Would you like to back up now? [Y/n]: "
+        ).strip().lower()
+    except EOFError:
+        answer = "y"
+
+    wants_backup = answer in ("", "y", "yes")
+
+    if wants_backup:
+        backups_dir = install_path.parent / "m12labs_backups"
+        print(f"\n  Creating backup in {backups_dir} …")
+        try:
+            archive = create_backup(install_path, backups_dir)
+            print(f"  ✓ Backup created: {archive}")
+            print()
+            return True
+        except NotImplementedError:
+            print()
+            print("  ℹ  Automatic backup is not yet available in this version.")
+            print("  Please back up the panel manually before continuing.")
+            print(f"  (Panel directory: {install_path})")
+            print()
+        except Exception as exc:  # pylint: disable=broad-except
+            print()
+            print(f"  ✗ Backup failed: {exc}")
+            print()
+            try:
+                proceed = input(
+                    "  The backup could not be created. Continue without a backup? [y/N]: "
+                ).strip().lower()
+            except EOFError:
+                proceed = "n"
+
+            if proceed not in ("y", "yes"):
+                print("  Update cancelled. Please resolve the backup issue first.")
+                return False
+            print()
+            return True
+
+    # User declined or backup not available – ask for explicit confirmation
+    print("  Continuing without a backup may be risky.")
+    print("  If the update fails you may not be able to roll back easily.")
+    print()
+    try:
+        confirm = input(
+            "  Are you sure you want to continue WITHOUT a backup? [y/N]: "
+        ).strip().lower()
+    except EOFError:
+        confirm = "n"
+
+    if confirm not in ("y", "yes"):
+        print("\n  Update cancelled.")
+        return False
+
+    print()
+    return True
+
+
 # install / update
 
 def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None:
@@ -368,6 +445,10 @@ def _run_update(cfg) -> int:
 
     # pause after db check so the user can read the result
     _pause_and_clear()
+
+    # backup prompt
+    if not _prompt_backup_before_update(install_path):
+        return 0
 
     # release selection
     old_ver = read_installed_version(install_path)
