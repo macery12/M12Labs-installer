@@ -119,13 +119,88 @@ def _ensure_certbot() -> bool:
     return True
 
 
+def _offer_dns01_fallback(domain: str) -> bool:
+    """Offer manual ACME DNS-01 validation as a fallback when the nginx
+    challenge method fails.
+
+    Explains the Cloudflare TXT-record process in plain language, asks for
+    explicit confirmation, then runs certbot in ``--manual`` mode.
+
+    Returns True when a certificate is successfully issued, False otherwise.
+    """
+    print()
+    print("  ─────────────────────────────────────────────────────────")
+    print("  Alternative: Manual DNS-01 (Cloudflare TXT record) method")
+    print("  ─────────────────────────────────────────────────────────")
+    print()
+    print("  Instead of proving domain ownership over HTTP, DNS-01 lets")
+    print("  you prove it by adding a temporary TXT record to your DNS.")
+    print("  This works even when port 80 is blocked or DNS hasn't")
+    print("  propagated to this server's IP yet.")
+    print()
+    print("  How it works:")
+    print()
+    print("  1. certbot will display a TXT record name and value, e.g.:")
+    print(f"       Name:   _acme-challenge.{domain}")
+    print("       Value:  <a long random string from Let's Encrypt>")
+    print()
+    print("  2. You open your Cloudflare dashboard (dash.cloudflare.com),")
+    print("     go to  DNS → Records  for your domain, and add:")
+    print("       Type:  TXT")
+    print(f"       Name:  _acme-challenge.{domain}")
+    print("       Content: <paste the value certbot gave you>")
+    print("       TTL:   Auto (or 60 seconds)")
+    print()
+    print("  3. Wait ~30–60 seconds for the record to propagate, then")
+    print("     press Enter in this terminal to let certbot verify it.")
+    print()
+    print("  4. Once verified, certbot issues the certificate and the")
+    print("     setup continues automatically.")
+    print()
+    print("  Note: you can delete the TXT record from Cloudflare after")
+    print("  the certificate is issued — it is only needed during this step.")
+    print()
+    if not _confirm(
+        f"Start manual DNS-01 certificate request for {domain}?"
+    ):
+        print("  Fallback cancelled – no certificate was issued.")
+        return False
+
+    print()
+    print(f"  Running certbot manual DNS-01 for {domain}…")
+    print("  Follow the on-screen instructions to add the TXT record.")
+    print()
+    cmd = _sudo([
+        "certbot", "certonly",
+        "--manual",
+        "--preferred-challenges", "dns",
+        "-d", domain,
+    ])
+    ok, _ = _run(cmd, capture=False)
+    if not ok:
+        print()
+        print("  ✗ Manual DNS-01 certificate request failed.")
+        print("    Check that the TXT record was added correctly and that")
+        print("    DNS propagation had enough time before you pressed Enter.")
+        return False
+
+    print()
+    print(f"  ✓ SSL certificate issued for {domain} via DNS-01.")
+    return True
+
+
 def _request_certificate(domain: str) -> bool:
     """Run certbot to obtain an SSL certificate for *domain*.
 
-    Uses ``certonly --nginx`` so certbot leverages the already-installed nginx
+    Primary method: ``certonly --nginx`` – uses the already-installed nginx
     (and its default site config) as the ACME challenge handler, without
-    permanently modifying any nginx config itself.  The domain-specific
-    panel.conf is written separately after the cert is successfully issued.
+    permanently modifying any nginx config.  The domain-specific panel.conf
+    is written separately after the cert is successfully issued.
+
+    Fallback method: if the nginx challenge fails, the user is offered the
+    manual ACME DNS-01 flow (:func:`_offer_dns01_fallback`).  This lets the
+    certificate be issued even when port 80 is blocked or the domain's A
+    record doesn't point to this server yet.
 
     Passes stdin/stdout/stderr through so certbot can interact with the user.
     Returns True on success.
@@ -135,17 +210,18 @@ def _request_certificate(domain: str) -> bool:
     print()
     cmd = _sudo(["certbot", "certonly", "--nginx", "-d", domain])
     ok, _ = _run(cmd, capture=False)
-    if not ok:
+    if ok:
         print()
-        print("  ✗ certbot failed to obtain a certificate.")
-        print("    Common causes:")
-        print("    • DNS has not propagated yet.")
-        print("    • Port 80 is blocked by a firewall.")
-        print("    • The domain does not resolve to this server.")
-        return False
+        print(f"  ✓ SSL certificate issued for {domain}.")
+        return True
+
     print()
-    print(f"  ✓ SSL certificate issued for {domain}.")
-    return True
+    print("  ✗ certbot (nginx method) failed to obtain a certificate.")
+    print("    Common causes:")
+    print("    • DNS has not propagated to this server's IP yet.")
+    print("    • Port 80 is blocked by a firewall or cloud security group.")
+    print("    • The domain's A record does not point to this server.")
+    return _offer_dns01_fallback(domain)
 
 
 def _write_nginx_config(install_path: Path, domain: str) -> bool:
@@ -267,9 +343,11 @@ def configure_nginx(install_path: Path) -> bool:
     2.  Show DNS/readiness checklist and ask for confirmation.
     3.  [1/6] Install / verify nginx.
     4.  [2/6] Install / verify certbot.
-    5.  [3/6] Request SSL certificate via certbot (uses the existing nginx
-              default config as the ACME challenge handler; the domain-specific
-              panel config is written *after* the cert is issued).
+    5.  [3/6] Request SSL certificate via certbot.
+              Primary:  ``certonly --nginx`` (HTTP-01 challenge).
+              Fallback: if that fails, offer manual ACME DNS-01 via Cloudflare
+              TXT record – the user is walked through the process and must
+              confirm before the fallback is attempted.
     6.  [4/6] Write the domain-specific nginx config from panel.conf template.
     7.  [5/6] Enable the nginx site via symlink.
     8.  [6/6] Run ``nginx -t``; stop immediately and show full errors on failure.
