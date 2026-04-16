@@ -106,7 +106,7 @@ def _show_menu() -> str:
 
 def _db_test_connection(install_path: Path) -> None:
     from installer.config import read_db_credentials_from_env
-    from installer.steps.database import check_db_connection
+    from installer.steps.database import check_credentials, database_exists, setup_database
     from installer.system import read_env_value
 
     env_path = install_path / ".env"
@@ -124,25 +124,54 @@ def _db_test_connection(install_path: Path) -> None:
         _pause_and_clear()
         return
 
-    print(
-        f"  Testing connection: "
-        f"{creds['db_user']}@{db_host}:{db_port}/{creds['db_name']} …"
-    )
-    ok = check_db_connection(
+    db_name = creds["db_name"]
+    db_user = creds["db_user"]
+    db_pass = creds["db_pass"]
+
+    # Step 1: validate credentials without requiring the database to exist.
+    print(f"  Checking credentials: {db_user}@{db_host}:{db_port} …")
+    auth_ok = check_credentials(
         db_host=db_host,
         db_port=db_port,
-        db_name=creds["db_name"],
-        db_user=creds["db_user"],
-        db_pass=creds["db_pass"],
+        db_user=db_user,
+        db_pass=db_pass,
     )
-    if ok:
+    if not auth_ok:
+        print("  ✗ Authentication failed.")
+        print("    Check that MariaDB/MySQL is running and that the")
+        print("    credentials in .env are correct.")
+        _pause_and_clear()
+        return
+
+    # Step 2: check whether the target database actually exists (read-only).
+    print(f"  ✓ Credentials valid. Checking database '{db_name}' …")
+    exists = database_exists(
+        db_host=db_host,
+        db_port=db_port,
+        db_name=db_name,
+        db_user=db_user,
+        db_pass=db_pass,
+    )
+    if exists:
         print("  ✓ Database connection successful.")
+        _pause_and_clear()
+        return
+
+    # Database is missing – inform the user and ask whether to create it.
+    print(f"  Database '{db_name}' does not exist under these credentials.")
+    print("  Would you like to create it?")
+    try:
+        answer = input("  Create database? [y/N]: ").strip().lower()
+    except EOFError:
+        answer = "n"
+
+    if answer in ("y", "yes"):
+        if setup_database(db_name, db_user, db_pass):
+            print("  ✓ Database created successfully.")
+        else:
+            print("  ✗ Database creation failed. See output above.")
     else:
-        print("  ✗ Database connection failed.")
-        print(
-            "    Check that MariaDB/MySQL is running and the credentials"
-            " in .env are correct."
-        )
+        print("  No changes made.")
     _pause_and_clear()
 
 
@@ -465,7 +494,7 @@ def _run_install_manual(cfg) -> int | None:
     from installer.steps.deps import install_dependencies
     from installer.steps.files import clone_panel, download_panel
     from installer.steps.releases import DEVELOP_BRANCH_TAG
-    from installer.steps.database import check_db_connection, setup_database
+    from installer.steps.database import check_credentials, database_exists, setup_database
     from installer.steps.laravel import configure_laravel
     from installer.steps.workers import configure_workers
     from installer.system import read_env_value
@@ -546,31 +575,45 @@ def _run_install_manual(cfg) -> int | None:
 
         elif stage_idx == 2:
             if reused_creds:
-                # Existing credentials chosen – just verify the connection.
+                # Existing credentials chosen – verify credentials then confirm DB exists.
                 env_path = install_path / ".env"
                 db_host = read_env_value(env_path, "DB_HOST") or "127.0.0.1"
                 db_port = read_env_value(env_path, "DB_PORT") or "3306"
                 print(
-                    f"  Reusing existing credentials – testing connection "
-                    f"({cfg.db_user}@{db_host}:{db_port}/{cfg.db_name})…"
+                    f"  Reusing existing credentials – checking "
+                    f"{cfg.db_user}@{db_host}:{db_port} …"
                 )
-                ok = check_db_connection(
+                auth_ok = check_credentials(
+                    db_host=db_host,
+                    db_port=db_port,
+                    db_user=cfg.db_user,
+                    db_pass=db_pass,
+                )
+                if not auth_ok:
+                    logger.error("Manual install: Stage 3 credential check failed")
+                    print("  ✗ Authentication failed.")
+                    print(
+                        "    Check that MariaDB is running and the credentials"
+                        " in .env are correct."
+                    )
+                elif not database_exists(
                     db_host=db_host,
                     db_port=db_port,
                     db_name=cfg.db_name,
                     db_user=cfg.db_user,
                     db_pass=db_pass,
-                )
-                if ok:
+                ):
+                    logger.error(
+                        "Manual install: Stage 3 – database '%s' not found", cfg.db_name
+                    )
+                    print(f"  ✗ Database '{cfg.db_name}' does not exist.")
+                    print(
+                        "    Run 'Set up database' without reusing credentials"
+                        " to create it."
+                    )
+                else:
                     completed[2] = True
                     print("  ✓ Database connected.")
-                else:
-                    logger.error("Manual install: Stage 3 DB connection test failed")
-                    print("  ✗ Database connection failed.")
-                    print(
-                        "    Check that MariaDB is running and the credentials"
-                        " in .env are correct."
-                    )
             else:
                 if setup_database(cfg.db_name, cfg.db_user, db_pass):
                     completed[2] = True
@@ -736,7 +779,7 @@ def _run_update(cfg) -> int:
     from installer.steps.files import clone_panel, download_panel, read_installed_version
     from installer.steps.laravel import artisan, update_laravel
     from installer.steps.releases import DEVELOP_BRANCH_TAG
-    from installer.steps.database import check_db_connection
+    from installer.steps.database import check_credentials, database_exists
     from installer.system import read_env_value
 
     install_path: Path = cfg.install_path
@@ -791,10 +834,26 @@ def _run_update(cfg) -> int:
 
         if check_pass:
             print(
-                f"\n  Checking database connection "
-                f"({check_user}@{check_host}:{check_port}/{check_name})…"
+                f"\n  Checking credentials: "
+                f"{check_user}@{check_host}:{check_port} …"
             )
-            ok = check_db_connection(
+            auth_ok = check_credentials(
+                db_host=check_host,
+                db_port=check_port,
+                db_user=check_user,
+                db_pass=check_pass,
+            )
+            if not auth_ok:
+                check_pass = ""  # clear from memory
+                print("  ✗ Authentication failed.")
+                print(
+                    "  To investigate or repair the database, choose"
+                    " 'Database Tools' from the main menu."
+                )
+                print("  Update has been cancelled.")
+                _pause_and_clear()
+                return 1
+            db_exists = database_exists(
                 db_host=check_host,
                 db_port=check_port,
                 db_name=check_name,
@@ -802,10 +861,10 @@ def _run_update(cfg) -> int:
                 db_pass=check_pass,
             )
             check_pass = ""  # clear from memory
-            if ok:
+            if db_exists:
                 print("  ✓ Database connection successful.")
             else:
-                print("  ✗ Database connection check failed.")
+                print(f"  ✗ Database '{check_name}' does not exist.")
                 print(
                     "  To investigate or repair the database, choose"
                     " 'Database Tools' from the main menu."
