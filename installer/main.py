@@ -260,6 +260,7 @@ def _prompt_backup_before_update(install_path: Path) -> bool:
         except Exception as exc:  # pylint: disable=broad-except
             print()
             print(f"  ✗ Backup failed: {exc}")
+            print("    (Check disk space, permissions, and that the install path exists.)")
             print()
             try:
                 proceed = input(
@@ -276,7 +277,7 @@ def _prompt_backup_before_update(install_path: Path) -> bool:
 
     # User declined or backup not available – ask for explicit confirmation
     print("  Continuing without a backup may be risky.")
-    print("  If the update fails you may not be able to roll back easily.")
+    print("  If the update fails you may not be able to rollback easily.")
     print()
     try:
         confirm = input(
