@@ -18,6 +18,7 @@ from installer.log import get_logger
 from installer.system import (
     get_package_manager,
     install_packages,
+    mark_apt_cache_stale,
     run_command_no_cwd,
     with_privilege,
 )
@@ -91,11 +92,9 @@ def install_dependencies() -> bool:
                 logger.warning("add-apt-repository failed; continuing without PPA")
                 print("  Warning: could not add ondrej/php PPA – continuing anyway.")
 
-        # Update package lists after adding PPA
-        update_cmd = with_privilege(["apt-get", "update"])
-        if update_cmd and not run_command_no_cwd(update_cmd):
-            logger.error("apt-get update failed after adding PPA")
-            return False
+        # Mark the cache stale so the next install_packages() call will
+        # run apt-get update and pick up packages from the new PPA.
+        mark_apt_cache_stale()
 
     # PHP 8.3 and system packages
     print("  Installing PHP 8.3 and system packages…")

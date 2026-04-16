@@ -26,6 +26,40 @@ from typing import Sequence
 
 _logger = logging.getLogger("m12labs.setup")
 
+# Session-level flag: set to True after apt-get update has been run once.
+# Reset to False (stale) whenever a new repository is added so the next
+# install_packages() call will re-fetch the package lists.
+_apt_cache_fresh: bool = False
+
+
+def mark_apt_cache_stale() -> None:
+    """Mark the apt package cache as stale.
+
+    Call this after adding a new repository (e.g. a PPA) so that the next
+    :func:`install_packages` call will run ``apt-get update`` before
+    attempting to install packages from the new repo.
+    """
+    global _apt_cache_fresh
+    _apt_cache_fresh = False
+
+
+def _all_packages_installed(packages: Sequence[str]) -> bool:
+    """Return ``True`` if every package in *packages* is already installed.
+
+    Uses ``dpkg-query -s`` which exits 0 only when every listed package is
+    installed and properly configured.  Falls back to ``False`` (assume not
+    installed) when ``dpkg-query`` is unavailable so the caller will
+    proceed with the normal install path.
+    """
+    if not shutil.which("dpkg-query"):
+        return False
+    result = subprocess.run(
+        ["dpkg-query", "-s", *packages],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
 
 def read_env_value(env_path: Path, key: str) -> str | None:
     """Return the value of *key* from a ``.env`` file, or ``None`` if absent.
@@ -129,15 +163,36 @@ def with_privilege(cmd: Sequence[str]) -> list[str] | None:
 def install_packages(packages: Sequence[str]) -> bool:
     """Install *packages* using the detected system package manager.
 
+    For ``apt-get``, the package lists are only refreshed (``apt-get update``)
+    when necessary:
+
+    * All packages are already installed → skip update *and* install entirely.
+    * Some packages are missing AND the cache has not been refreshed yet in
+      this process → run ``apt-get update`` once, then install.
+    * Some packages are missing AND the cache is already fresh (updated
+      earlier in the same run) → skip update, install directly.
+
+    Call :func:`mark_apt_cache_stale` after adding a new repository so that
+    the next invocation will refresh the lists before installing.
+
     Returns ``True`` when all packages were installed successfully.
     """
+    global _apt_cache_fresh
+
     package_manager = get_package_manager()
     if not package_manager:
         print("No supported package manager found (apt-get/dnf/yum/pacman/zypper/apk).")
         return False
 
     if package_manager == "apt-get":
-        update_cmd = with_privilege(["apt-get", "update"])
+        # Skip everything when every package is already installed.
+        if _all_packages_installed(packages):
+            print(f"  Packages already installed: {', '.join(packages)}")
+            return True
+        # Only refresh package lists when the cache has not been updated yet.
+        update_cmd = (
+            with_privilege(["apt-get", "update"]) if not _apt_cache_fresh else None
+        )
         install_cmd = with_privilege(["apt-get", "install", "-y", *packages])
     elif package_manager == "dnf":
         update_cmd = None
@@ -160,6 +215,9 @@ def install_packages(packages: Sequence[str]) -> bool:
         return False
 
     print(f"Installing packages via {package_manager}: {', '.join(packages)}")
-    if update_cmd and not run_command_no_cwd(update_cmd):
-        return False
+    if update_cmd:
+        if not run_command_no_cwd(update_cmd):
+            return False
+        if package_manager == "apt-get":
+            _apt_cache_fresh = True
     return run_command_no_cwd(install_cmd)
