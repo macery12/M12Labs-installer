@@ -454,6 +454,153 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
     print("─" * width)
 
 
+def _run_install_manual(cfg) -> int | None:
+    """Manual install: prompt the user before running each stage.
+
+    Returns an exit code (0 = success, 1 = failure) or ``None`` when the
+    user quits back to the install submenu without completing the install.
+    """
+    from installer.config import prompt_for_db_config, prompt_for_release
+    from installer.log import get_logger, setup_logging
+    from installer.steps.deps import install_dependencies
+    from installer.steps.files import clone_panel, download_panel
+    from installer.steps.releases import DEVELOP_BRANCH_TAG
+    from installer.steps.database import setup_database
+    from installer.steps.laravel import configure_laravel
+    from installer.steps.workers import configure_workers
+
+    cfg = prompt_for_release(cfg)
+    cfg, db_pass = prompt_for_db_config(cfg)
+
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+    setup_logging(cfg.install_path, cfg.text_logs_enabled)
+    logger = get_logger()
+    install_path: Path = cfg.install_path
+
+    logger.info(
+        "Manual install started: install_path=%s, release=%s",
+        install_path,
+        cfg.selected_release or "(default)",
+    )
+
+    def _stage_prompt(num: int, total: int, label: str) -> str:
+        """Print a stage header and return 'run', 'skip', or 'quit'."""
+        print()
+        print(f"  ─── Stage {num}/{total}: {label} " + "─" * max(0, 38 - len(label)))
+        try:
+            answer = input("  Run this stage? [Y/n/q to abort]: ").strip().lower()
+        except EOFError:
+            answer = "y"
+        if answer in ("q", "quit", "0"):
+            return "quit"
+        if answer in ("n", "no", "s", "skip"):
+            return "skip"
+        return "run"
+
+    total = 5
+
+    # Stage 1: dependencies
+    action = _stage_prompt(1, total, "Install system dependencies")
+    if action == "quit":
+        db_pass = ""
+        return None
+    if action == "run":
+        if not install_dependencies():
+            logger.error("Manual install: dependencies failed")
+            print("\n✗ Stage 1 failed. See output above.")
+            db_pass = ""
+            return 1
+
+    # Stage 2: panel files
+    action = _stage_prompt(2, total, "Download panel files")
+    if action == "quit":
+        db_pass = ""
+        return None
+    if action == "run":
+        if is_develop:
+            ok = clone_panel(install_path)
+        else:
+            ok = download_panel(install_path, release_url=cfg.selected_release_url or None)
+        if not ok:
+            logger.error("Manual install: file download/clone failed")
+            print("\n✗ Stage 2 failed. See output above.")
+            db_pass = ""
+            return 1
+
+    # Stage 3: database
+    action = _stage_prompt(3, total, "Set up database")
+    if action == "quit":
+        db_pass = ""
+        return None
+    if action == "run":
+        if not setup_database(cfg.db_name, cfg.db_user, db_pass):
+            logger.error("Manual install: database setup failed")
+            print("\n✗ Stage 3 failed. See output above.")
+            db_pass = ""
+            return 1
+
+    # Stage 4: Laravel
+    action = _stage_prompt(4, total, "Configure Laravel")
+    if action == "quit":
+        db_pass = ""
+        return None
+    if action == "run":
+        if not configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
+            logger.error("Manual install: Laravel configuration failed")
+            print("\n✗ Stage 4 failed. See output above.")
+            db_pass = ""
+            return 1
+
+    db_pass = ""  # no longer needed after stage 4
+
+    # Stage 5: workers
+    action = _stage_prompt(5, total, "Configure workers")
+    if action == "quit":
+        return None
+    if action == "run":
+        if not configure_workers(install_path):
+            logger.error("Manual install: worker configuration failed")
+            print("\n✗ Stage 5 failed. See output above.")
+            return 1
+
+    logger.info("Manual install completed successfully: install_path=%s", install_path)
+    _print_final_summary(install_path, cfg.db_name, cfg.db_user)
+    return 0
+
+
+def _install_submenu(cfg) -> int | None:
+    """Show the Install submenu (Automatic / Manual / Back).
+
+    Returns an exit code when the install completes, or ``None`` when the
+    user selects Back so the caller can return to the main menu.
+    """
+    while True:
+        print()
+        print("  Install:")
+        print("  ─────────────────────────────")
+        print("  1) Automatic")
+        print("  2) Manual")
+        print("  0) Back")
+        print()
+        try:
+            choice = input("  Select an option [1/2/0]: ").strip().lower()
+        except EOFError:
+            return None
+
+        if choice == "1":
+            return _run_install(cfg)
+        elif choice == "2":
+            result = _run_install_manual(cfg)
+            if result is None:
+                # User quit from within the manual flow; go back to this submenu.
+                continue
+            return result
+        elif choice in ("0", "b", "back", "q"):
+            return None
+        else:
+            print("  Invalid option. Please enter 1, 2, or 0.")
+
+
 def _run_install(cfg) -> int:
     from installer.config import prompt_for_db_config, prompt_for_release
     from installer.log import get_logger, setup_logging
@@ -701,7 +848,10 @@ def main() -> int:
         choice = _show_menu()
 
         if choice == "1":
-            return _run_install(cfg)
+            result = _install_submenu(cfg)
+            if result is not None:
+                return result
+            # None means Back – redisplay the main menu.
 
         elif choice == "2":
             if state == "fresh":
