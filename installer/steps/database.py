@@ -25,7 +25,7 @@ import re
 import shutil
 import subprocess
 
-from setup.log import get_logger
+from installer.log import get_logger
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
 

@@ -1,14 +1,19 @@
-"""Config management for the M12 Labs installer.
+"""Config management for the M12Labs panel installer.
 
-Reads and writes ``config.toml`` located in the same directory as this file.
-Creates the file with sensible defaults when it does not exist yet.
+Reads and writes ``installer/config.toml`` using ``tomllib``.
+Creates the file with sensible defaults when it does not exist.
+
+**Security:** The database password is NEVER persisted to disk by this
+module.  It is collected from the user (or auto-generated) once, held
+in memory for the duration of the install run, and written only into
+the panel's ``.env`` file by ``steps/laravel.py``.
 
 File format (TOML)::
 
     install_path = "/var/www/m12labs"
-    show_detailed_checks = false
-    build_on_update = false
-    build_on_uninstall = false
+    db_name = "jexactyldb"
+    db_user = "jexactyluser"
+    non_interactive = false
     text_logs_enabled = true
 """
 
@@ -16,72 +21,87 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
+import string
 import tempfile
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-EXAMPLE_PATH = "/var/www/m12labs"
+DEFAULT_INSTALL_PATH: Path = Path("/var/www/m12labs")
+DEFAULT_DB_NAME: str = "jexactyldb"
+DEFAULT_DB_USER: str = "jexactyluser"
 
-# Config file lives next to this source file so it stays with the installer.
+# Config file lives next to this source file so it stays with the installer
 _CONFIG_FILE = Path(__file__).parent / "config.toml"
 
-_logger = logging.getLogger("m12labs")
+_logger = logging.getLogger("m12labs.setup")
 
 
 @dataclass
-class Config:
-    install_path: Path | None = None
-    show_detailed_checks: bool = False
-    build_on_update: bool = True
-    build_on_uninstall: bool = True
+class InstallConfig:
+    """Runtime configuration for the panel installer.
+
+    Note: ``db_pass`` is intentionally absent.  The password only ever
+    lives in memory (as a plain ``str`` local variable) and in the
+    panel's ``.env``.  It must not be added to this dataclass or to any
+    persisted file.
+    """
+
+    install_path: Path = field(default_factory=lambda: DEFAULT_INSTALL_PATH)
+    db_name: str = DEFAULT_DB_NAME
+    db_user: str = DEFAULT_DB_USER
+    selected_release: str = ""
+    selected_release_url: str = ""
+    non_interactive: bool = False
     text_logs_enabled: bool = True
 
 
-def load_config() -> Config:
+def load_config() -> InstallConfig:
     """Load config from ``config.toml``, returning defaults if missing or invalid."""
     try:
         with _CONFIG_FILE.open("rb") as fh:
             data = tomllib.load(fh)
     except OSError:
         _logger.debug("Config file not found or unreadable (%s) – using defaults", _CONFIG_FILE)
-        return Config()
+        return InstallConfig()
 
-    install_path_str = data.get("install_path", "").strip()
-    cfg = Config(
-        install_path=Path(install_path_str) if install_path_str else None,
-        show_detailed_checks=bool(data.get("show_detailed_checks", False)),
-        build_on_update=bool(data.get("build_on_update", False)),
-        build_on_uninstall=bool(data.get("build_on_uninstall", False)),
+    install_path_str = str(data.get("install_path", "")).strip()
+    db_name = str(data.get("db_name", DEFAULT_DB_NAME)).strip() or DEFAULT_DB_NAME
+    db_user = str(data.get("db_user", DEFAULT_DB_USER)).strip() or DEFAULT_DB_USER
+
+    cfg = InstallConfig(
+        install_path=Path(install_path_str) if install_path_str else DEFAULT_INSTALL_PATH,
+        db_name=db_name,
+        db_user=db_user,
+        selected_release=str(data.get("selected_release", "")).strip(),
+        selected_release_url=str(data.get("selected_release_url", "")).strip(),
+        non_interactive=bool(data.get("non_interactive", False)),
         text_logs_enabled=bool(data.get("text_logs_enabled", True)),
     )
     _logger.debug(
-        "Config loaded from %s: install_path=%s, text_logs_enabled=%s, "
-        "show_detailed_checks=%s, build_on_update=%s, build_on_uninstall=%s",
-        _CONFIG_FILE,
+        "Config loaded: install_path=%s, db_name=%s, db_user=%s, selected_release=%s",
         cfg.install_path,
-        cfg.text_logs_enabled,
-        cfg.show_detailed_checks,
-        cfg.build_on_update,
-        cfg.build_on_uninstall,
+        cfg.db_name,
+        cfg.db_user,
+        cfg.selected_release,
     )
     return cfg
 
 
-def save_config(config: Config) -> None:
+def save_config(cfg: InstallConfig) -> None:
     """Write all config fields to ``config.toml`` using an atomic write.
 
-    The new content is written to a temporary file in the same directory first,
-    then renamed into place.  This prevents a partially-written (corrupted)
-    config file if the process is interrupted mid-write.
+    **The database password is never written by this function.**
     """
-    install_path_value = str(config.install_path) if config.install_path is not None else ""
     lines = [
-        f'install_path = "{install_path_value}"',
-        f"show_detailed_checks = {str(config.show_detailed_checks).lower()}",
-        f"build_on_update = {str(config.build_on_update).lower()}",
-        f"build_on_uninstall = {str(config.build_on_uninstall).lower()}",
-        f"text_logs_enabled = {str(config.text_logs_enabled).lower()}",
+        f'install_path = "{cfg.install_path}"',
+        f'db_name = "{cfg.db_name}"',
+        f'db_user = "{cfg.db_user}"',
+        f'selected_release = "{cfg.selected_release}"',
+        f'selected_release_url = "{cfg.selected_release_url}"',
+        f"non_interactive = {str(cfg.non_interactive).lower()}",
+        f"text_logs_enabled = {str(cfg.text_logs_enabled).lower()}",
     ]
     content = "\n".join(lines) + "\n"
 
@@ -95,7 +115,6 @@ def save_config(config: Config) -> None:
                 os.fsync(fh.fileno())
             os.replace(tmp_path, _CONFIG_FILE)
         except Exception:
-            # Clean up the temp file on failure to avoid leaving debris.
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -106,66 +125,171 @@ def save_config(config: Config) -> None:
         raise
 
     _logger.debug(
-        "Config saved to %s: install_path=%s, text_logs_enabled=%s, "
-        "show_detailed_checks=%s, build_on_update=%s, build_on_uninstall=%s",
-        _CONFIG_FILE,
-        config.install_path,
-        config.text_logs_enabled,
-        config.show_detailed_checks,
-        config.build_on_update,
-        config.build_on_uninstall,
+        "Config saved: install_path=%s, db_name=%s, db_user=%s, selected_release=%s",
+        cfg.install_path,
+        cfg.db_name,
+        cfg.db_user,
+        cfg.selected_release,
     )
 
 
-_REQUIRED_FILES = ("artisan", "package.json", "composer.json")
+def read_db_credentials_from_env(env_path: Path) -> dict[str, str]:
+    """Read DB_DATABASE, DB_USERNAME, and DB_PASSWORD from an existing ``.env`` file.
 
+    Returns a dict with keys ``db_name``, ``db_user``, and ``db_pass``.
+    Values are empty strings when the key is absent or the file cannot be read.
 
-def validate_install_path(path: Path) -> str | None:
-    """Check that *path* looks like a valid M12 Labs panel installation.
-
-    Returns ``None`` when the path is valid, or a human-readable error string
-    describing the first problem found.
+    **Security:** This function reads the password into memory to allow the
+    caller to decide whether to reuse it.  The value is never persisted to
+    disk by this function.
     """
-    if not path.exists():
-        return "directory does not exist"
-    if not path.is_dir():
-        return "not a directory"
-    for required in _REQUIRED_FILES:
-        if not (path / required).is_file():
-            return f"missing `{required}`"
-    return None
+    from installer.system import read_env_value
+
+    def _get(key: str) -> str:
+        value = read_env_value(env_path, key)
+        return value if value is not None else ""
+
+    return {
+        "db_name": _get("DB_DATABASE"),
+        "db_user": _get("DB_USERNAME"),
+        "db_pass": _get("DB_PASSWORD"),
+    }
 
 
-def prompt_for_install_path(config: Config) -> Config:
-    """Prompt the user for the panel install path, persist and return updated config."""
-    if config.install_path is None:
-        _logger.info("Install path not configured – prompting user")
-        print("\nPanel install location has not been configured yet.")
+def generate_db_password(length: int = 24) -> str:
+    """Generate a cryptographically secure random database password.
+
+    The returned string lives only in memory and is never written to disk
+    by this module.
+    """
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def prompt_for_install_path(cfg: InstallConfig) -> InstallConfig:
+    """Prompt the user for the panel install path; persist and return updated config."""
+    print(f"\nPanel install path (default: {DEFAULT_INSTALL_PATH}):")
+    raw = input(f"  Enter path [press Enter for {DEFAULT_INSTALL_PATH}]: ").strip()
+    cfg.install_path = Path(raw) if raw else DEFAULT_INSTALL_PATH
+    save_config(cfg)
+    _logger.info("Install path set to: %s", cfg.install_path)
+    print(f"  Install path: {cfg.install_path}")
+    return cfg
+
+
+def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
+    """Prompt for DB name/user (persisted) and password (in memory only).
+
+    Before prompting, checks whether an ``.env`` already exists at the
+    install path.  If it contains a non-empty ``DB_PASSWORD`` the user is
+    offered the option to reuse the existing credentials instead of
+    supplying new ones.
+
+    Returns:
+        A tuple of ``(updated_config, db_pass_plaintext)``.
+
+    **Security:** The returned password string is never saved to disk by
+    this function.  The caller is responsible for passing it directly to
+    the install steps and not persisting it anywhere.
+    """
+    print("\nDatabase configuration:")
+
+    # Check for existing credentials in .env
+    env_path = cfg.install_path / ".env"
+    existing = read_db_credentials_from_env(env_path)
+    if existing["db_pass"]:
+        print(f"  Existing DB credentials found in {env_path}:")
+        print(f"    DB name : {existing['db_name'] or '(empty)'}")
+        print(f"    DB user : {existing['db_user'] or '(empty)'}")
+        print("    DB pass : (hidden)")
+        try:
+            answer = input("  Reuse existing DB credentials? [Y/n]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer in ("", "y"):
+            if existing["db_name"]:
+                cfg.db_name = existing["db_name"]
+            if existing["db_user"]:
+                cfg.db_user = existing["db_user"]
+            save_config(cfg)
+            _logger.info(
+                "Reusing existing DB credentials from %s: db_name=%s, db_user=%s",
+                env_path,
+                cfg.db_name,
+                cfg.db_user,
+            )
+            print("  Reusing existing DB credentials.")
+            return cfg, existing["db_pass"]
+
+    raw_name = input(f"  DB name   [default: {cfg.db_name}]: ").strip()
+    if raw_name:
+        cfg.db_name = raw_name
+
+    raw_user = input(f"  DB user   [default: {cfg.db_user}]: ").strip()
+    if raw_user:
+        cfg.db_user = raw_user
+
+    print("  DB password: leave blank to auto-generate a secure password.")
+    raw_pass = input("  DB password [blank = auto-generate]: ").strip()
+    if raw_pass:
+        db_pass = raw_pass
     else:
-        _logger.info("User changing install path (current: %s)", config.install_path)
-        print(f"\nCurrent install path: {config.install_path}")
-    print(f"  Example: {EXAMPLE_PATH}")
-    while True:
-        raw = input("Enter panel install path: ").strip()
-        if not raw:
-            print("Path cannot be empty. Please try again.")
-            continue
-        candidate = Path(raw)
-        error = validate_install_path(candidate)
-        if error:
-            _logger.warning("Invalid install path %s: %s", candidate, error)
-            print(f"Invalid path: {error}. Please try again.")
-            continue
-        config.install_path = candidate
-        save_config(config)
-        _logger.info("Install path set to: %s", config.install_path)
-        print(f"Saved install path: {config.install_path}")
-        return config
+        db_pass = generate_db_password()
+        print(f"  Generated password: {db_pass}")
+        print("  (Save this now – it will not be shown again.)")
+
+    # Persist name and user to disk; password is intentionally NOT saved
+    save_config(cfg)
+    _logger.info(
+        "DB config set: db_name=%s, db_user=%s (password not logged)",
+        cfg.db_name,
+        cfg.db_user,
+    )
+    return cfg, db_pass
 
 
-def ensure_install_path(config: Config) -> Config:
-    """Return config with ``install_path`` set, prompting the user if not yet configured."""
-    if config.install_path is not None:
-        _logger.debug("Install path already set: %s", config.install_path)
-        return config
-    return prompt_for_install_path(config)
+def prompt_for_release(cfg: InstallConfig) -> InstallConfig:
+    """Fetch available GitHub releases and prompt the user to pick one.
+
+    Sets ``cfg.selected_release`` and ``cfg.selected_release_url``, persists
+    them to ``config.toml``, and returns the updated config.
+
+    Falls back to the hard-coded default release URL when the GitHub API is
+    unreachable, so the installer can still proceed offline.
+    """
+    # Deferred import to keep config.py dependency-free at import time.
+    from installer.steps.releases import (
+        DEVELOP_BRANCH_TAG,
+        DEVELOP_REPO_GIT_URL,
+        fetch_releases,
+        get_archive_url,
+        prompt_release_selection,
+    )
+    import urllib.error
+
+    print("\nFetching available M12 Labs releases from GitHub…")
+    try:
+        releases = fetch_releases()
+    except (urllib.error.URLError, OSError) as exc:
+        _logger.warning("Could not fetch releases (%s) – using default URL", exc)
+        print(f"  Warning: could not reach GitHub ({exc}).")
+        print("  Falling back to default release URL.")
+        return cfg
+
+    release = prompt_release_selection(releases)
+    if release is None:
+        # User pressed Back; keep existing selection (or empty = default).
+        print("  No release selected – using previous selection or default.")
+        return cfg
+
+    if release.tag == DEVELOP_BRANCH_TAG:
+        cfg.selected_release = DEVELOP_BRANCH_TAG
+        cfg.selected_release_url = ""
+    else:
+        cfg.selected_release = release.tag
+        cfg.selected_release_url = get_archive_url(release)
+
+    save_config(cfg)
+    _logger.info("Release selected: %s (%s)", cfg.selected_release, cfg.selected_release_url)
+    print(f"  Selected: {release.name}")
+    return cfg

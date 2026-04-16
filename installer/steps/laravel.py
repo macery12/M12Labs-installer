@@ -6,8 +6,8 @@ import re
 import shutil
 from pathlib import Path
 
-from setup.log import get_logger
-from setup.system import read_env_value, run_as_www_data, run_command_no_cwd, with_privilege
+from installer.log import get_logger
+from installer.system import read_env_value, run_as_www_data, run_command_no_cwd, with_privilege
 
 
 def artisan(install_path: Path, *args: str) -> bool:
@@ -21,7 +21,7 @@ def artisan(install_path: Path, *args: str) -> bool:
 
 
 def _read_env_value(env_path: Path, key: str) -> str | None:
-    """Thin wrapper around :func:`~setup.system.read_env_value` for this module."""
+    """Thin wrapper around :func:`~installer.system.read_env_value` for this module."""
     return read_env_value(env_path, key)
 
 

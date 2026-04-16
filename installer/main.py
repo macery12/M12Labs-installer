@@ -1,482 +1,515 @@
 #!/usr/bin/env python3
-"""Linux-first M12 Labs extension installer."""
+"""M12Labs panel setup – interactive menu-driven installer."""
 
 from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
-from backup import BackupEntry, create_backup, default_backups_dir, list_backups, restore_backup
-from build import build_only as run_build_only
-from check import (
-    format_results,
-    format_results_concise,
-    has_failures,
-    has_modified_files,
-    run_checks,
-)
-from config import Config, ensure_install_path, load_config, prompt_for_install_path, save_config
-from log import get_logger, setup_logging
-
-PLACEHOLDER_EXTENSION_COUNT = 12
-EXTENSION_CATALOG = [
-    f"Extension {i}" for i in range(1, PLACEHOLDER_EXTENSION_COUNT + 1)
-]
-PAGE_SIZE = 6
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
-def clear_screen() -> None:
-    if sys.stdout.isatty() and os.getenv("TERM"):
-        subprocess.run(["clear"], check=False)
-    else:
-        print("\n" * 2, end="")
+# platform helpers
 
-
-def wait_for_enter() -> None:
-    input("\nPress Enter to continue...")
-
-
-def ensure_linux() -> bool:
+def _ensure_linux() -> bool:
     if platform.system().lower() != "linux":
-        print("This installer currently supports Linux only.")
+        print("This installer supports Linux only.")
+        print(f"Detected platform: {platform.system()}")
         return False
     return True
 
 
-def calculate_total_pages(item_count: int, page_size: int) -> int:
-    if item_count <= 0:
-        return 1
-    return (item_count - 1) // page_size + 1
+def _warn_if_not_privileged() -> None:
+    try:
+        is_root = os.geteuid() == 0
+    except AttributeError:
+        is_root = False
+    if not is_root and not shutil.which("sudo"):
+        print(
+            "\nWarning: you are not running as root and sudo is not available."
+            "\nSome steps (package installation, systemd, chown) may fail."
+        )
 
 
-def install_menu() -> None:
-    logger = get_logger()
-    page = 0
-    while True:
-        clear_screen()
-        start = page * PAGE_SIZE
-        end = start + PAGE_SIZE
-        page_items = EXTENSION_CATALOG[start:end]
-        total_pages = calculate_total_pages(len(EXTENSION_CATALOG), PAGE_SIZE)
-        next_option_number = len(page_items) + 1
-        back_option_number = len(page_items) + 2
-
-        print("Install extensions (template)")
-        print(f"Page {page + 1}/{total_pages}\n")
-        for index, extension_name in enumerate(page_items, start=1):
-            print(f"{index}. {extension_name}")
-        print(f"{next_option_number}. Next page")
-        print(f"{back_option_number}. Back")
-
-        choice = input("\nSelect an option: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(page_items):
-            parsed_choice = int(choice)
-            selected = page_items[parsed_choice - 1]
-            logger.info("Install action: selected extension '%s'", selected)
-            print(f"\nInstall placeholder for: {selected}")
-            print("Real install logic will be added in a future phase.")
-            wait_for_enter()
-        elif choice == str(next_option_number):
-            page = (page + 1) % total_pages
-        elif choice == str(back_option_number):
-            return
-        else:
-            print("\nInvalid option.")
-            wait_for_enter()
+def _pause_and_clear() -> None:
+    try:
+        input("\n  Press Enter to continue…")
+    except EOFError:
+        pass
+    os.system("clear")
 
 
-def uninstall_menu(installed_extensions: list[str]) -> None:
-    logger = get_logger()
-    while True:
-        clear_screen()
-        print("Uninstall extensions (template)\n")
-        if installed_extensions:
-            for index, extension_name in enumerate(installed_extensions, start=1):
-                print(f"{index}. {extension_name}")
-        else:
-            print("No tracked installed extensions yet.")
-        print("B. Back")
+# directory prompt
 
-        choice = input("\nSelect an option: ").strip().lower()
-        if choice == "b":
-            return
-        if (
-            installed_extensions
-            and choice.isdigit()
-            and 1 <= (parsed_choice := int(choice)) <= len(installed_extensions)
-        ):
-            selected = installed_extensions[parsed_choice - 1]
-            logger.info("Uninstall action: selected extension '%s'", selected)
-            print(f"\nUninstall placeholder for: {selected}")
-            print("Real uninstall logic will be added in a future phase.")
-        else:
-            print("\nInvalid option.")
-        wait_for_enter()
+def _prompt_install_dir(cfg):
+    from installer.config import DEFAULT_INSTALL_PATH, save_config
+
+    default = cfg.install_path or DEFAULT_INSTALL_PATH
+    print(f"\nPanel install directory (default: {default}):")
+    try:
+        raw = input(f"  Enter path [press Enter for {default}]: ").strip()
+    except EOFError:
+        raw = ""
+    cfg.install_path = Path(raw) if raw else default
+    save_config(cfg)
+    return cfg
 
 
-def update_menu(installed_extensions: list[str]) -> None:
-    logger = get_logger()
-    while True:
-        clear_screen()
-        print("Update extensions (template)\n")
-        if installed_extensions:
-            for index, extension_name in enumerate(installed_extensions, start=1):
-                print(f"{index}. {extension_name}")
-            print("A. Update all")
-        else:
-            print("No tracked installed extensions yet.")
-        print("B. Back")
+# state detection
 
-        choice = input("\nSelect an option: ").strip().lower()
-        if choice == "b":
-            return
-        if choice == "a" and installed_extensions:
-            logger.info("Update action: update all extensions (%d tracked)", len(installed_extensions))
-            print("\nUpdate-all placeholder.")
-            print("Real update logic will be added in a future phase.")
-        elif (
-            choice.isdigit()
-            and 1 <= (parsed_choice := int(choice)) <= len(installed_extensions)
-        ):
-            selected = installed_extensions[parsed_choice - 1]
-            logger.info("Update action: selected extension '%s'", selected)
-            print(f"\nUpdate placeholder for: {selected}")
-            print("Real update logic will be added in a future phase.")
-        else:
-            print("\nInvalid option.")
-        wait_for_enter()
-
-
-def check_menu(cfg: Config) -> None:
-    logger = get_logger()
-    install_root = cfg.install_path
-    clear_screen()
-    print("Check / validation mode\n")
-    print(f"Panel install path: {install_root}\n")
-
-    logger.info("Check started for: %s", install_root)
-
-    results = run_checks(install_root)
-
-    if cfg.show_detailed_checks:
-        print(format_results(results))
+def _print_state_banner(install_path: Path, state: str) -> None:
+    print()
+    if state == "existing":
+        from installer.steps.files import read_installed_version
+        ver = read_installed_version(install_path)
+        ver_label = f"v{ver}" if ver else "unknown version"
+        print(f"  ✓ Existing M12Labs panel detected at {install_path} ({ver_label}).")
+    elif state == "partial":
+        print(f"  ⚠  Partial/incomplete panel setup detected at {install_path}.")
+        print("     Some panel files are present but .env is missing.")
+        print("     Consider running Install to complete setup, or investigate first.")
     else:
-        print(format_results_concise(results))
+        if install_path.is_dir():
+            print(f"  • Directory exists at {install_path} (no panel files found).")
+        else:
+            print(f"  • Fresh install target: {install_path} (directory will be created).")
 
-    passed = sum(1 for r in results if r.status.value == "PASS")
-    warned = sum(1 for r in results if r.status.value == "WARN")
-    failed = sum(1 for r in results if r.status.value == "FAIL")
-    logger.info(
-        "Check complete for %s: %d passed, %d warning(s), %d failure(s)",
-        install_root, passed, warned, failed,
+
+# main menu
+
+def _show_menu() -> str:
+    print()
+    print("  Main Menu:")
+    print("  ─────────────────────────────")
+    print("  1) Install")
+    print("  2) Update")
+    print("  3) Uninstall  (coming soon)")
+    print("  4) Database Tools")
+    print("  5) Webserver")
+    print("  q) Quit")
+    print()
+    try:
+        choice = input("  Select an option [1/2/3/4/5/q]: ").strip().lower()
+    except EOFError:
+        choice = "q"
+    return choice
+
+
+# database tools sub-menu
+
+def _db_test_connection(install_path: Path) -> None:
+    from installer.config import read_db_credentials_from_env
+    from installer.steps.database import check_db_connection
+    from installer.system import read_env_value
+
+    env_path = install_path / ".env"
+    if not env_path.exists():
+        print("  .env file not found – cannot load database credentials.")
+        _pause_and_clear()
+        return
+
+    creds = read_db_credentials_from_env(env_path)
+    db_host = read_env_value(env_path, "DB_HOST") or "127.0.0.1"
+    db_port = read_env_value(env_path, "DB_PORT") or "3306"
+
+    if not creds["db_pass"]:
+        print("  DB_PASSWORD not found in .env – cannot test connection.")
+        _pause_and_clear()
+        return
+
+    print(
+        f"  Testing connection: "
+        f"{creds['db_user']}@{db_host}:{db_port}/{creds['db_name']} …"
     )
-
-    if has_modified_files(results):
-        print("\n⚠  WARNING: The panel installation contains modified or missing files.")
-        print("   This installation does not appear to be stock/original.")
-    elif has_failures(results):
-        print("\nSome checks failed. Review the paths above.")
+    ok = check_db_connection(
+        db_host=db_host,
+        db_port=db_port,
+        db_name=creds["db_name"],
+        db_user=creds["db_user"],
+        db_pass=creds["db_pass"],
+    )
+    if ok:
+        print("  ✓ Database connection successful.")
     else:
-        print("\nAll checks passed. Panel installation appears to be original.")
+        print("  ✗ Database connection failed.")
+        print(
+            "    Check that MariaDB/MySQL is running and the credentials"
+            " in .env are correct."
+        )
+    _pause_and_clear()
 
-    wait_for_enter()
 
-
-def build_only_menu(install_root: Path) -> None:
-    logger = get_logger()
-    clear_screen()
-    print("Build only\n")
-
-    if not ensure_linux():
-        wait_for_enter()
+def _db_check_service() -> None:
+    print("  Checking MariaDB service status…")
+    if not shutil.which("systemctl"):
+        print("  systemctl not found – cannot check service status.")
+        _pause_and_clear()
         return
+    result = subprocess.run(
+        ["systemctl", "status", "mariadb"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        print("  ✓ MariaDB service is running.")
+    else:
+        print("  ✗ MariaDB service does not appear to be running.")
+        print("    To start it: sudo systemctl start mariadb")
+    lines = (result.stdout or result.stderr or "").splitlines()
+    for line in lines[:10]:
+        print(f"    {line}")
+    _pause_and_clear()
 
-    logger.info("Build only started for: %s", install_root)
-    run_build_only(install_root)
-    wait_for_enter()
 
-
-def backup_menu(cfg: Config) -> None:
-    logger = get_logger()
-    backups_dir = default_backups_dir()
-
+def _database_tools(install_path: Path) -> None:
     while True:
-        clear_screen()
-        print("Backups\n")
-        print("1. Create backup")
-        print("2. Restore backup")
-        print("3. Back")
+        print()
+        print("  Database Tools:")
+        print("  ─────────────────────────────")
+        print("  1) Test database connection  (uses .env credentials)")
+        print("  2) Check MariaDB service status")
+        print("  b) Back to main menu")
+        print()
+        try:
+            choice = input("  Select an option [1/2/b]: ").strip().lower()
+        except EOFError:
+            break
 
-        choice = input("\nSelect an option: ").strip()
         if choice == "1":
-            _create_backup_flow(cfg, backups_dir, logger)
+            _db_test_connection(install_path)
         elif choice == "2":
-            _restore_backup_flow(cfg, backups_dir, logger)
-        elif choice == "3":
-            return
+            _db_check_service()
+        elif choice in ("b", "back", "q"):
+            break
         else:
-            print("\nInvalid option.")
-            wait_for_enter()
+            print("  Invalid option. Please enter 1, 2, or b.")
 
 
-def _create_backup_flow(cfg: Config, backups_dir, logger) -> None:
-    clear_screen()
-    print("Create backup\n")
-    install_path = cfg.install_path
-    print(f"Source:  {install_path}")
-    print(f"Dest:    {backups_dir}/")
+# webserver sub-menu
 
-    confirm = input("\nCreate a full backup now? [y/N]: ").strip().lower()
-    if confirm != "y":
-        print("Backup cancelled.")
-        wait_for_enter()
-        return
-
-    logger.info("Backup creation started. Source: %s", install_path)
-    print("\nNote: For slower systems this may take a minute.")
-    print("Compressing backup archive…\n")
-
-    result: dict = {}
-
-    def _run() -> None:
-        try:
-            result["path"] = create_backup(install_path, backups_dir)
-        except Exception as exc:  # noqa: BLE001
-            result["error"] = exc
-
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-
-    spinner = ["|", "/", "-", "\\"]
-    idx = 0
-    while thread.is_alive():
-        print(f"\r  {spinner[idx % len(spinner)]}  Working…", end="", flush=True)
-        idx += 1
-        time.sleep(0.15)
-    thread.join()
-    print("\r" + " " * 20 + "\r", end="", flush=True)  # clear spinner line
-
-    if "error" in result:
-        logger.error("Backup creation failed: %s", result["error"])
-        print(f"✗ Backup failed: {result['error']}")
-    else:
-        archive_path = result["path"]
-        logger.info("Backup creation complete. Archive: %s", archive_path)
-        print(f"✓ Backup saved: {archive_path.name}")
-    wait_for_enter()
-
-
-def _restore_backup_flow(cfg: Config, backups_dir, logger) -> None:
-    clear_screen()
-    print("Restore backup\n")
-
-    backups = list_backups(backups_dir)
-    if not backups:
-        print("No backups found.")
-        wait_for_enter()
-        return
-
-    for idx, entry in enumerate(backups, start=1):
-        print(f"{idx}. {entry['filename']}  |  {entry['timestamp']}  |  {entry['size_human']}")
-    print("0. Back")
-
-    raw = input("\nSelect a backup to restore: ").strip()
-    if raw == "0":
-        return
-    if not raw.isdigit() or not (1 <= int(raw) <= len(backups)):
-        print("\nInvalid selection.")
-        wait_for_enter()
-        return
-
-    selected: BackupEntry = backups[int(raw) - 1]
-    logger.info("Restore: user selected backup '%s'", selected["filename"])
-
-    install_path = cfg.install_path
-    print(f"\nSelected:  {selected['filename']}")
-    print(f"Timestamp: {selected['timestamp']}")
-    print(f"Size:      {selected['size_human']}")
-    print()
-    print("⚠  WARNING: This operation cannot be undone.")
-    print(f"   ALL current contents of the following directory will be deleted")
-    print(f"   and replaced with the contents of the selected backup:")
-    print(f"     {install_path}")
-    print()
-    confirm = input("Type 'yes' to confirm the restore, or anything else to cancel: ").strip().lower()
-    if confirm != "yes":
-        logger.info("Restore cancelled by user.")
-        print("Restore cancelled.")
-        wait_for_enter()
-        return
-
-    logger.info("Restore started. Archive: %s  Target: %s", selected["filename"], install_path)
-    print("\nNote: For slower systems this may take a minute.")
-    print("Restoring backup…\n")
-
-    result: dict = {}
-
-    def _run_restore() -> None:
-        try:
-            restore_backup(selected["path"], install_path)
-        except Exception as exc:  # noqa: BLE001
-            result["error"] = exc
-
-    thread = threading.Thread(target=_run_restore, daemon=True)
-    thread.start()
-
-    spinner = ["|", "/", "-", "\\"]
-    idx = 0
-    while thread.is_alive():
-        print(f"\r  {spinner[idx % len(spinner)]}  Working…", end="", flush=True)
-        idx += 1
-        time.sleep(0.15)
-    thread.join()
-    print("\r" + " " * 20 + "\r", end="", flush=True)  # clear spinner line
-
-    if "error" in result:
-        logger.error("Restore failed: %s", result["error"])
-        print(f"✗ Restore failed: {result['error']}")
-    else:
-        logger.info("Restore complete. Archive: %s", selected["filename"])
-        print("✓ Restore complete.")
-        print("  Restart the installer to pick up any configuration changes from the restored backup.")
-    wait_for_enter()
-
-
-def config_menu(cfg: Config) -> Config:
-    logger = get_logger()
+def _webserver_menu(install_path: Path) -> None:
     while True:
-        clear_screen()
-        print("Config\n")
-        print(f"2. Change install path          [{cfg.install_path}]")
-        print(f"3. Show detailed checks         [{'on' if cfg.show_detailed_checks else 'off'}]")
-        print(f"4. Text log files               [{'on' if cfg.text_logs_enabled else 'off'}]")
-        print(f"5. Build on update              [{'on' if cfg.build_on_update else 'off'}]")
-        print(f"6. Build on uninstall           [{'on' if cfg.build_on_uninstall else 'off'}]")
-        print("0. Back")
+        print()
+        print("  Webserver:")
+        print("  ─────────────────────────────")
+        print("  1) NGINX")
+        print("  0) Back")
+        print()
+        try:
+            choice = input("  Select an option [1/0]: ").strip().lower()
+        except EOFError:
+            break
 
-        choice = input("\nSelect an option: ").strip()
-        if choice == "2":
-            cfg = prompt_for_install_path(cfg)
-            logger.info("Config changed: install_path = %s", cfg.install_path)
-            wait_for_enter()
-        elif choice == "3":
-            cfg.show_detailed_checks = not cfg.show_detailed_checks
-            save_config(cfg)
-            logger.info("Config changed: show_detailed_checks = %s", cfg.show_detailed_checks)
-            print(f"\nShow detailed checks: {'on' if cfg.show_detailed_checks else 'off'}")
-            wait_for_enter()
-        elif choice == "4":
-            cfg.text_logs_enabled = not cfg.text_logs_enabled
-            save_config(cfg)
-            logger.info("Config changed: text_logs_enabled = %s", cfg.text_logs_enabled)
-            print(f"\nText log files: {'on' if cfg.text_logs_enabled else 'off'}")
-            wait_for_enter()
-        elif choice == "5":
-            cfg.build_on_update = not cfg.build_on_update
-            save_config(cfg)
-            logger.info("Config changed: build_on_update = %s", cfg.build_on_update)
-            print(f"\nBuild on update: {'on' if cfg.build_on_update else 'off'}")
-            wait_for_enter()
-        elif choice == "6":
-            cfg.build_on_uninstall = not cfg.build_on_uninstall
-            save_config(cfg)
-            logger.info("Config changed: build_on_uninstall = %s", cfg.build_on_uninstall)
-            print(f"\nBuild on uninstall: {'on' if cfg.build_on_uninstall else 'off'}")
-            wait_for_enter()
-        elif choice == "0":
-            return cfg
+        if choice == "1":
+            from installer.steps.nginx import configure_nginx
+            configure_nginx(install_path)
+            _pause_and_clear()
+        elif choice in ("0", "b", "back", "q"):
+            break
         else:
-            print("\nInvalid option.")
-            wait_for_enter()
+            print("  Invalid option. Please enter 1 or 0.")
 
 
-def _print_startup_summary(cfg: Config) -> None:
-    """Print a concise status summary when the installer starts."""
-    from backup import default_backups_dir, list_backups
+# install / update
 
-    backups_dir = default_backups_dir()
-    backup_count = len(list_backups(backups_dir))
-
-    # Check whether a manifest is findable without doing a full network fetch.
-    manifest_note = "not checked at startup"
-    install_root = cfg.install_path
-    if install_root is not None and install_root.exists():
-        local_manifest = install_root / "manifest.json"
-        if local_manifest.exists():
-            manifest_note = "local manifest found"
-        else:
-            manifest_note = "no local manifest (will try remote on check)"
-
-    print("─" * 44)
-    print(f"  {'Install path':<15}: {cfg.install_path}")
-    print(f"  {'Text logging':<15}: {'enabled' if cfg.text_logs_enabled else 'disabled'}")
-    print(f"  {'Detailed checks':<15}: {'on' if cfg.show_detailed_checks else 'off'}")
-    print(f"  {'Backups':<15}: {backup_count} available")
-    print(f"  {'Manifest':<15}: {manifest_note}")
-    print("─" * 44)
+def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None:
+    width = 60
+    print("\n" + "─" * width)
+    print("  M12Labs panel installation complete!")
+    print("─" * width)
+    print(f"  Install path : {install_path}")
+    print(f"  DB name      : {db_name}")
+    print(f"  DB user      : {db_user}")
+    print(f"  DB password  : (saved in {install_path / '.env'})")
+    print("─" * width)
     print()
+    print("  Next steps:")
+    print()
+    print("  1. Configure NGINX to serve the panel:")
+    print(f"       root {install_path / 'public'};")
+    print("       index index.php;")
+    print("       (see M12Docs for a full NGINX server block example)")
+    print()
+    print("  2. Set up SSL (Let's Encrypt recommended):")
+    print("       sudo apt-get install certbot python3-certbot-nginx")
+    print("       sudo certbot --nginx -d your.domain.com")
+    print()
+    print("  3. Start / restart NGINX:")
+    print("       sudo systemctl restart nginx")
+    print()
+    print("─" * width)
 
 
-def main() -> int:
-    if not ensure_linux():
-        return 1
+def _run_install(cfg) -> int:
+    from installer.config import prompt_for_db_config, prompt_for_release
+    from installer.log import get_logger, setup_logging
+    from installer.steps.deps import install_dependencies
+    from installer.steps.files import clone_panel, download_panel
+    from installer.steps.releases import DEVELOP_BRANCH_TAG
+    from installer.steps.database import setup_database
+    from installer.steps.laravel import configure_laravel
+    from installer.steps.workers import configure_workers
 
-    cfg = load_config()
-    cfg = ensure_install_path(cfg)
+    cfg = prompt_for_release(cfg)
+    cfg, db_pass = prompt_for_db_config(cfg)
+
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
     logger = get_logger()
-    logger.info("Installer started. Panel path: %s", cfg.install_path)
-    installed_extensions: list[str] = []
+    logger.info(
+        "Install started: install_path=%s, release=%s, db_name=%s, db_user=%s",
+        cfg.install_path,
+        cfg.selected_release or "(default)",
+        cfg.db_name,
+        cfg.db_user,
+    )
+
+    print()
+    print("Starting installation.  This will take several minutes.")
+    print("You will be prompted to answer artisan questions during Step 4.")
+    print()
+
+    install_path: Path = cfg.install_path
+
+    if not install_dependencies():
+        logger.error("Install aborted: Step 1 (dependencies) failed")
+        print("\n✗ Installation failed at Step 1. See output above.")
+        return 1
+
+    if is_develop:
+        if not clone_panel(install_path):
+            logger.error("Install aborted: Step 2 (clone) failed")
+            print("\n✗ Installation failed at Step 2. See output above.")
+            return 1
+    elif not download_panel(install_path, release_url=cfg.selected_release_url or None):
+        logger.error("Install aborted: Step 2 (download) failed")
+        print("\n✗ Installation failed at Step 2. See output above.")
+        return 1
+
+    if not setup_database(cfg.db_name, cfg.db_user, db_pass):
+        logger.error("Install aborted: Step 3 (database) failed")
+        print("\n✗ Installation failed at Step 3. See output above.")
+        return 1
+
+    if not configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
+        logger.error("Install aborted: Step 4 (Laravel) failed")
+        print("\n✗ Installation failed at Step 4. See output above.")
+        db_pass = ""
+        return 1
+
+    db_pass = ""
+
+    if not configure_workers(install_path):
+        logger.error("Install aborted: Step 5 (workers) failed")
+        print("\n✗ Installation failed at Step 5. See output above.")
+        return 1
+
+    logger.info("Install completed successfully: install_path=%s", install_path)
+    _print_final_summary(install_path, cfg.db_name, cfg.db_user)
+    return 0
+
+
+def _run_update(cfg) -> int:
+    from installer.config import read_db_credentials_from_env, prompt_for_release
+    from installer.log import get_logger, setup_logging
+    from installer.steps.files import clone_panel, download_panel, read_installed_version
+    from installer.steps.laravel import artisan, update_laravel
+    from installer.steps.releases import DEVELOP_BRANCH_TAG
+    from installer.steps.database import check_db_connection
+    from installer.system import read_env_value
+
+    install_path: Path = cfg.install_path
+    env_path = install_path / ".env"
+
+    # db check before touching anything
+    if env_path.exists():
+        creds = read_db_credentials_from_env(env_path)
+        db_host = read_env_value(env_path, "DB_HOST") or "127.0.0.1"
+        db_port = read_env_value(env_path, "DB_PORT") or "3306"
+
+        if creds["db_pass"]:
+            print(
+                f"\n  Checking database connection "
+                f"({creds['db_user']}@{db_host}:{db_port}/{creds['db_name']})…"
+            )
+            ok = check_db_connection(
+                db_host=db_host,
+                db_port=db_port,
+                db_name=creds["db_name"],
+                db_user=creds["db_user"],
+                db_pass=creds["db_pass"],
+            )
+            if ok:
+                print("  ✓ Database connection successful.")
+                if creds["db_name"]:
+                    cfg.db_name = creds["db_name"]
+                if creds["db_user"]:
+                    cfg.db_user = creds["db_user"]
+            else:
+                print("  ✗ Database connection check failed.")
+                print(
+                    "  To investigate or repair the database, choose"
+                    " 'Database Tools' from the main menu."
+                )
+                print("  Update has been cancelled.")
+                _pause_and_clear()
+                return 1
+        else:
+            print("  Note: DB credentials not found in .env – skipping database check.")
+    else:
+        print("  Note: .env not found – skipping database check.")
+
+    # pause after db check so the user can read the result
+    _pause_and_clear()
+
+    # release selection
+    old_ver = read_installed_version(install_path)
+    cfg = prompt_for_release(cfg)
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+    new_ver_label = "develop branch" if is_develop else (cfg.selected_release or "latest")
+
+    # confirmation screen
+    width = 60
+    print()
+    print("─" * width)
+    print("  Update confirmation")
+    print("─" * width)
+    print(f"  Install path    : {install_path}")
+    print(f"  Current version : {f'v{old_ver}' if old_ver else 'unknown'}")
+    print(f"  New version     : {new_ver_label}")
+    print("─" * width)
+    print()
+    print("  Press Enter to start the update, or Ctrl+C to cancel.")
+    try:
+        input("  > ")
+    except (EOFError, KeyboardInterrupt):
+        print("\n\nUpdate cancelled – no changes were made.")
+        return 0
+
+    setup_logging(cfg.install_path, cfg.text_logs_enabled)
+    logger = get_logger()
+    logger.info(
+        "Update started: install_path=%s, release=%s",
+        cfg.install_path,
+        cfg.selected_release or "(default)",
+    )
+
+    print()
+    print("Starting update.  This will take a few minutes.")
+    print()
+
+    # maintenance mode
+    print("  Putting application into maintenance mode…")
+    if not artisan(install_path, "down"):
+        logger.warning("artisan down failed – continuing with update")
+        print(
+            "  Warning: could not put application into maintenance mode – continuing."
+        )
+
+    # fetch and replace panel files
+    if is_develop:
+        if not clone_panel(install_path):
+            logger.error("Update aborted: file update (clone) failed")
+            print("\n✗ Update failed at file download step. See output above.")
+            if not artisan(install_path, "up"):
+                print(
+                    "  Warning: could not bring application back online"
+                    " – run `php artisan up` manually."
+                )
+            return 1
+    elif not download_panel(install_path, release_url=cfg.selected_release_url or None):
+        logger.error("Update aborted: file download failed")
+        print("\n✗ Update failed at file download step. See output above.")
+        if not artisan(install_path, "up"):
+            print(
+                "  Warning: could not bring application back online"
+                " – run `php artisan up` manually."
+            )
+        return 1
+
+    # laravel refresh
+    if not update_laravel(install_path):
+        logger.error("Update aborted: Laravel refresh failed")
+        print("\n✗ Update failed at Laravel refresh step. See output above.")
+        return 1
+
+    # read the version now on disk to confirm the update landed
+    installed_ver = read_installed_version(install_path)
+    installed_label = f"v{installed_ver}" if installed_ver else "unknown"
+
+    logger.info("Update completed successfully: install_path=%s", install_path)
+    print("\n" + "─" * width)
+    print("  M12Labs panel update complete!")
+    print("─" * width)
+    print(f"  Install path      : {install_path}")
+    print(f"  Installed version : {installed_label}")
+    print("─" * width)
+    return 0
+
+
+# entry point
+
+def main() -> int:
+    from installer.config import load_config
+    from installer.steps.files import detect_panel_state
+
+    print("=" * 60)
+    print("  M12Labs Panel Setup – Interactive Installer")
+    print("=" * 60)
+    print()
+
+    if not _ensure_linux():
+        return 1
+
+    _warn_if_not_privileged()
+
+    cfg = load_config()
+    cfg = _prompt_install_dir(cfg)
+    install_path: Path = cfg.install_path
+
+    state = detect_panel_state(install_path)
+    _print_state_banner(install_path, state)
 
     while True:
-        clear_screen()
-        print("M12 Labs Installer\n")
-        _print_startup_summary(cfg)
-        print("1. Install")
-        print("2. Uninstall")
-        print("3. Update")
-        print("4. Check")
-        print("5. Build only")
-        print("6. Backups")
-        print("7. Config")
-        print("0. Exit")
+        choice = _show_menu()
 
-        choice = input("\nSelect an option: ").strip()
         if choice == "1":
-            logger.info("Menu: Install")
-            install_menu()
+            return _run_install(cfg)
+
         elif choice == "2":
-            logger.info("Menu: Uninstall")
-            uninstall_menu(installed_extensions)
+            if state == "fresh":
+                print()
+                print("  ⚠  Update requires an existing installation, but none was")
+                print(f"  detected at {install_path}.")
+                print("  Please use 'Install' (option 1) to set up a new panel.")
+            else:
+                return _run_update(cfg)
+
         elif choice == "3":
-            logger.info("Menu: Update")
-            update_menu(installed_extensions)
+            print()
+            print("  Uninstall is not yet implemented.")
+            print("  (This feature is coming in a future release.)")
+
         elif choice == "4":
-            logger.info("Menu: Check")
-            check_menu(cfg)
+            _database_tools(install_path)
+
         elif choice == "5":
-            logger.info("Menu: Build only")
-            build_only_menu(cfg.install_path)
-        elif choice == "6":
-            logger.info("Menu: Backups")
-            backup_menu(cfg)
-        elif choice == "7":
-            logger.debug("Menu: Config")
-            cfg = config_menu(cfg)
-        elif choice == "0":
-            logger.info("Installer exiting.")
-            print("Goodbye.")
+            _webserver_menu(install_path)
+
+        elif choice in ("q", "quit", "exit"):
+            print("\nExiting installer. No changes were made.")
             return 0
+
         else:
-            print("\nInvalid option.")
-            wait_for_enter()
+            print("  Invalid option. Please enter 1, 2, 3, 4, 5, or q.")
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

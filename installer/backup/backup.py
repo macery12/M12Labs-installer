@@ -1,7 +1,7 @@
 """Backup helpers for the M12Labs panel installer – skeleton (optional in v1).
 
 Full implementation is deferred to a future iteration.  The module
-currently exposes placeholder stubs so that ``setup/backup/`` can be
+currently exposes placeholder stubs so that ``installer/backup/`` can be
 imported without errors.
 """
 
