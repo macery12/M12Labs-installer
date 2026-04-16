@@ -224,10 +224,65 @@ def _request_certificate(domain: str) -> bool:
     return _offer_dns01_fallback(domain)
 
 
+def _check_existing_config(install_path: Path, domain: str) -> str:
+    """Inspect the existing NGINX panel config (if any) and compare it to
+    the requested *domain* and *install_path*.
+
+    Checks ``_NGINX_SITES_AVAILABLE / _CONF_NAME`` (and the corresponding
+    sites-enabled symlink).
+
+    Returns
+    -------
+    ``"none"``
+        No existing config file was found.
+    ``"match"``
+        A config file exists and already references both *domain* and
+        *install_path* – it looks like it was created for this installation.
+    ``"conflict"``
+        A config file exists but references a different domain or install
+        path – overwriting without confirmation could break things.
+    """
+    dest = _NGINX_SITES_AVAILABLE / _CONF_NAME
+    if not dest.exists():
+        # Also check sites-enabled in case only the symlink exists
+        link = _NGINX_SITES_ENABLED / _CONF_NAME
+        if not link.exists():
+            return "none"
+        # Resolve the symlink to read the real file
+        dest = link.resolve()
+
+    try:
+        content = dest.read_text()
+    except OSError:
+        # Unreadable config – treat as a conflict so we don't silently
+        # overwrite something we couldn't inspect.
+        return "conflict"
+
+    domain_match = f"server_name {domain};" in content
+    path_match = f"root {install_path}/public;" in content
+
+    if domain_match and path_match:
+        return "match"
+    return "conflict"
+
+
 def _write_nginx_config(install_path: Path, domain: str) -> bool:
     """Render panel.conf and write it to sites-available.
 
-    Returns True on success.
+    Before writing, checks whether a config already exists and prompts the
+    user for confirmation when appropriate:
+
+    * **No existing config** → write directly.
+    * **Existing config matches** this domain + install path → offer
+      ``[r]euse / [w]rite new / [c]ancel``.  Choosing *reuse* skips
+      the write (the existing file is left untouched) and returns True so
+      the rest of the setup flow (symlink, nginx -t, restart) can continue.
+    * **Existing config conflicts** (different domain or path) → show a
+      warning and ask for explicit confirmation before overwriting.  Declining
+      returns False.
+
+    Returns True when the config is either successfully written or explicitly
+    reused, False otherwise.
     """
     if not _CONF_TEMPLATE.exists():
         print(f"  ✗ Template not found: {_CONF_TEMPLATE}")
@@ -238,6 +293,46 @@ def _write_nginx_config(install_path: Path, domain: str) -> bool:
         print("  Is nginx installed correctly?")
         return False
 
+    # -- Existing config detection -------------------------------------------
+    status = _check_existing_config(install_path, domain)
+
+    if status == "match":
+        dest = _NGINX_SITES_AVAILABLE / _CONF_NAME
+        print()
+        print(f"  ⚠  An existing NGINX panel config was found at {dest}.")
+        print(f"     It already references domain  {domain}  and")
+        print(f"     install path  {install_path}.")
+        print()
+        print("     What would you like to do?")
+        print("       [r] Reuse it  – keep the existing file, continue setup")
+        print("       [w] Write new – overwrite it with a freshly rendered config")
+        print("       [c] Cancel    – stop here, make no changes")
+        print()
+        try:
+            choice = input("  Your choice [r/w/c]: ").strip().lower()
+        except EOFError:
+            choice = "c"
+
+        if choice in ("c", ""):
+            print("  Setup cancelled – existing config was not changed.")
+            return False
+        if choice == "r":
+            print("  Reusing existing config – no file written.")
+            return True
+        # Any other input (including 'w') falls through to write below.
+
+    elif status == "conflict":
+        dest = _NGINX_SITES_AVAILABLE / _CONF_NAME
+        print()
+        print(f"  ⚠  WARNING: An existing NGINX panel config was found at {dest},")
+        print("     but it references a different domain or install path.")
+        print("     Overwriting it could break your current NGINX setup.")
+        print()
+        if not _confirm("Overwrite the existing config and continue?"):
+            print("  Setup cancelled – existing config was not changed.")
+            return False
+
+    # -- Render and write the config -----------------------------------------
     template = _CONF_TEMPLATE.read_text()
     config = template.replace("<domain>", domain)
     config = config.replace(
@@ -349,6 +444,9 @@ def configure_nginx(install_path: Path) -> bool:
               TXT record – the user is walked through the process and must
               confirm before the fallback is attempted.
     6.  [4/6] Write the domain-specific nginx config from panel.conf template.
+              Before writing, checks whether a config already exists:
+              same domain+path → reuse / write new / cancel;
+              different domain or path → warn and require explicit confirmation.
     7.  [5/6] Enable the nginx site via symlink.
     8.  [6/6] Run ``nginx -t``; stop immediately and show full errors on failure.
     9.  Prompt user before restarting nginx.
