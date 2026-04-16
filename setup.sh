@@ -132,9 +132,9 @@ if [ -d "$INSTALL_DIR/.git" ]; then
         warn "Local modifications detected in $INSTALL_DIR — they will be overwritten if an update is needed."
     fi
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
-    LOCAL_HEAD=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null || true)
-    REMOTE_HEAD=$(git -C "$INSTALL_DIR" rev-parse "origin/$REPO_BRANCH" 2>/dev/null || true)
-    if [ -n "$LOCAL_HEAD" ] && [ "$LOCAL_HEAD" = "$REMOTE_HEAD" ]; then
+    local_head=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null || true)
+    remote_head=$(git -C "$INSTALL_DIR" rev-parse "origin/$REPO_BRANCH" 2>/dev/null || true)
+    if [ -n "$local_head" ] && [ "$local_head" = "$remote_head" ]; then
         ok "Repository is already up to date — skipping update."
     else
         info "New commits found — updating to latest $REPO_BRANCH ..."
