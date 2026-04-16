@@ -575,10 +575,7 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
     def _p(*args, **kwargs) -> None:
         """print() that writes to both the terminal and the capture buffer."""
         print(*args, **kwargs)
-        kwargs.pop("end", None)
-        kwargs.pop("file", None)
-        end = "\n"
-        print(*args, end=end, file=_buf, **kwargs)
+        print(*args, file=_buf)
 
     _p()
     _p("=" * width)
