@@ -299,6 +299,26 @@ def _fmt_size(num_bytes: int) -> str:
     return f"{size:.1f} TB"
 
 
+def _fmt_backup_label(path: "Path") -> str:
+    """Return a human-readable label for a backup archive.
+
+    Parses the ``YYYYMMDD_HHMMSS`` stamp embedded in the filename and
+    formats it as ``YYYY-MM-DD HH:MM:SS UTC``.  Falls back to the raw
+    filename if the stamp cannot be parsed.
+    """
+    import re, datetime as _dt
+    m = re.search(r"(\d{8})_(\d{6})", path.stem)
+    if m:
+        try:
+            dt = _dt.datetime.strptime(
+                f"{m.group(1)}_{m.group(2)}", "%Y%m%d_%H%M%S"
+            ).replace(tzinfo=_dt.timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except ValueError:
+            pass
+    return path.name
+
+
 def _manage_backups_menu(install_path: Path) -> None:
     from installer.backup.backup import (
         DEFAULT_BACKUPS_DIR,
@@ -321,7 +341,8 @@ def _manage_backups_menu(install_path: Path) -> None:
             print()
             for idx, path in enumerate(backups, start=1):
                 size = _fmt_size(path.stat().st_size)
-                print(f"  {idx}) {path.name}  ({size})")
+                label = _fmt_backup_label(path)
+                print(f"  {idx}) {label}  ({size})")
 
         print()
         print("  d) Delete a backup")
@@ -599,10 +620,18 @@ def _run_update(cfg) -> int:
     # maintenance mode
     print("  Putting application into maintenance mode…")
     if not artisan(install_path, "down"):
-        logger.warning("artisan down failed – continuing with update")
+        logger.error("Update aborted: could not put application into maintenance mode")
         print(
-            "  Warning: could not put application into maintenance mode – continuing."
+            "\n✗ Update aborted: could not put application into maintenance mode."
         )
+        print(
+            "  The application may already be down or PHP/artisan is unavailable."
+        )
+        print(
+            "  Resolve the issue and try again, or run `php artisan down` manually"
+            " before retrying."
+        )
+        return 1
 
     # fetch and replace panel files
     if is_develop:
