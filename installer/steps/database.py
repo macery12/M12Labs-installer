@@ -234,13 +234,19 @@ def database_exists(
         logger.warning("database_exists: mysql client not found")
         return False
 
-    # Escape the database name for use in a SQL string literal.
-    # db_name is also validated by callers via _validate_identifier, so
-    # single quotes and backslashes should never be present in practice.
-    escaped_name = db_name.replace("\\", "\\\\").replace("'", "\\'")
+    # Validate the identifier before embedding it in SQL.  The same rules
+    # apply here as in setup_database – only alphanumeric + underscore chars
+    # are allowed, so injection via the name is impossible in practice, but
+    # we validate explicitly to make that guarantee clear.
+    id_error = _validate_identifier(db_name, "DB name")
+    if id_error:
+        logger.warning("database_exists: %s", id_error)
+        return False
+
+    # db_name is now guaranteed to be alphanumeric + underscores only.
     sql = (
         f"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA"
-        f" WHERE SCHEMA_NAME = '{escaped_name}' LIMIT 1;"
+        f" WHERE SCHEMA_NAME = '{db_name}' LIMIT 1;"
     )
 
     env = os.environ.copy()
