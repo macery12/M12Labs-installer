@@ -260,7 +260,7 @@ def prompt_for_release(cfg: InstallConfig) -> InstallConfig:
     When multiple repos are configured in :data:`~installer.steps.releases.RELEASE_REPOS`,
     the user is first asked to choose a release source, then a specific release
     from that source.  When only one repo is configured, the source selection
-    step is skipped and the existing single-repo behaviour is preserved.
+    step is skipped and the existing single-repo behavior is preserved.
 
     Sets ``cfg.selected_release``, ``cfg.selected_release_url``, and
     ``cfg.selected_repo_git_url``, persists them to ``config.toml``, and

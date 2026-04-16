@@ -164,7 +164,7 @@ def prompt_repo_selection(repos: list[RepoSource]) -> RepoSource | None:
 
 def prompt_release_selection(
     releases: list[Release],
-    repo_name: str = "M12 Labs",
+    repo_name: str = "M12Labs",
 ) -> Release | None:
     """Display available releases and let the user pick one.
 
