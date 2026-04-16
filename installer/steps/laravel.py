@@ -21,7 +21,7 @@ def artisan(install_path: Path, *args: str) -> bool:
 
 
 def _read_env_value(env_path: Path, key: str) -> str | None:
-    """Thin wrapper around :func:`~setup.system.read_env_value` for this module."""
+    """Thin wrapper around :func:`~installer.system.read_env_value` for this module."""
     return read_env_value(env_path, key)
 
 
