@@ -53,6 +53,7 @@ class InstallConfig:
     db_user: str = DEFAULT_DB_USER
     selected_release: str = ""
     selected_release_url: str = ""
+    selected_repo_git_url: str = ""
     non_interactive: bool = False
     text_logs_enabled: bool = True
 
@@ -76,6 +77,7 @@ def load_config() -> InstallConfig:
         db_user=db_user,
         selected_release=str(data.get("selected_release", "")).strip(),
         selected_release_url=str(data.get("selected_release_url", "")).strip(),
+        selected_repo_git_url=str(data.get("selected_repo_git_url", "")).strip(),
         non_interactive=bool(data.get("non_interactive", False)),
         text_logs_enabled=bool(data.get("text_logs_enabled", True)),
     )
@@ -100,6 +102,7 @@ def save_config(cfg: InstallConfig) -> None:
         f'db_user = "{cfg.db_user}"',
         f'selected_release = "{cfg.selected_release}"',
         f'selected_release_url = "{cfg.selected_release_url}"',
+        f'selected_repo_git_url = "{cfg.selected_repo_git_url}"',
         f"non_interactive = {str(cfg.non_interactive).lower()}",
         f"text_logs_enabled = {str(cfg.text_logs_enabled).lower()}",
     ]
@@ -254,32 +257,53 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str, bool]:
 def prompt_for_release(cfg: InstallConfig) -> InstallConfig:
     """Fetch available GitHub releases and prompt the user to pick one.
 
-    Sets ``cfg.selected_release`` and ``cfg.selected_release_url``, persists
-    them to ``config.toml``, and returns the updated config.
+    When multiple repos are configured in :data:`~installer.steps.releases.RELEASE_REPOS`,
+    the user is first asked to choose a release source, then a specific release
+    from that source.  When only one repo is configured, the source selection
+    step is skipped and the existing single-repo behavior is preserved.
+
+    Sets ``cfg.selected_release``, ``cfg.selected_release_url``, and
+    ``cfg.selected_repo_git_url``, persists them to ``config.toml``, and
+    returns the updated config.
 
     Falls back to the hard-coded default release URL when the GitHub API is
     unreachable, so the installer can still proceed offline.
     """
-    # Deferred import to keep config.py dependency-free at import time.
     from installer.steps.releases import (
         DEVELOP_BRANCH_TAG,
-        DEVELOP_REPO_GIT_URL,
+        RELEASE_REPOS,
         fetch_releases,
         get_archive_url,
         prompt_release_selection,
+        prompt_repo_selection,
     )
     import urllib.error
 
-    print("\nFetching available M12 Labs releases from GitHub…")
+    # ------------------------------------------------------------------ #
+    # Repo selection (only shown when multiple repos are configured)
+    # ------------------------------------------------------------------ #
+    if len(RELEASE_REPOS) > 1:
+        repo = prompt_repo_selection(RELEASE_REPOS)
+        if repo is None:
+            # User pressed Back; keep existing selection (or empty = default).
+            print("  No source selected – using previous selection or default.")
+            return cfg
+    else:
+        repo = RELEASE_REPOS[0]
+
+    # ------------------------------------------------------------------ #
+    # Release selection from the chosen repo
+    # ------------------------------------------------------------------ #
+    print(f"\nFetching available {repo.name} releases from GitHub…")
     try:
-        releases = fetch_releases()
+        releases = fetch_releases(api_url=repo.api_url)
     except (urllib.error.URLError, OSError) as exc:
         _logger.warning("Could not fetch releases (%s) – using default URL", exc)
         print(f"  Warning: could not reach GitHub ({exc}).")
         print("  Falling back to default release URL.")
         return cfg
 
-    release = prompt_release_selection(releases)
+    release = prompt_release_selection(releases, repo_name=repo.name)
     if release is None:
         # User pressed Back; keep existing selection (or empty = default).
         print("  No release selected – using previous selection or default.")
@@ -292,7 +316,14 @@ def prompt_for_release(cfg: InstallConfig) -> InstallConfig:
         cfg.selected_release = release.tag
         cfg.selected_release_url = get_archive_url(release)
 
+    cfg.selected_repo_git_url = repo.git_url
+
     save_config(cfg)
-    _logger.info("Release selected: %s (%s)", cfg.selected_release, cfg.selected_release_url)
-    print(f"  Selected: {release.name}")
+    _logger.info(
+        "Release selected: %s (%s) from %s",
+        cfg.selected_release,
+        cfg.selected_release_url,
+        repo.name,
+    )
+    print(f"  Selected: {release.name}  [source: {repo.name}]")
     return cfg
