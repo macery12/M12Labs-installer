@@ -17,7 +17,9 @@
 #
 # What this script does:
 #   1. Verifies required tools (git, python3) are available.
-#   2. Clones the macery12/M12Labs-installer repo (or updates it if already cloned).
+#   2. Reuses an existing clone of macery12/M12Labs-installer if present and up to date;
+#      fetches and updates only when the remote has new commits; clones fresh when absent.
+#      If the directory exists but is not a valid git repo it is removed and re-cloned.
 #   3. Asks for confirmation before performing any privileged work.
 #   4. Re-executes itself with sudo if not already running as root.
 #   5. Runs python3 -m installer.main inside the repo directory.
@@ -74,7 +76,7 @@ done
 
 if [ "$_CONFIRMED" -eq 0 ]; then
     printf '  This script will:\n'
-    printf '    • Clone or update the M12Labs-installer repository into %s\n' "$INSTALL_DIR"
+    printf '    • Reuse or update the M12Labs-installer repository in %s\n' "$INSTALL_DIR"
     printf '    • Install system packages (apt)\n'
     printf '    • Create panel directory\n'
     printf '    • Configure cron and systemd services\n'
@@ -120,18 +122,31 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Clone or update the repository
+# Clone, update, or reuse the repository
 # ---------------------------------------------------------------------------
 
 if [ -d "$INSTALL_DIR/.git" ]; then
-    info "Existing installation found — pulling latest $REPO_BRANCH ..."
-    # Warn if the directory has local modifications that will be overwritten.
+    info "Existing installation found — checking for updates..."
+    # Warn about local modifications that would be overwritten on update.
     if ! git -C "$INSTALL_DIR" diff --quiet HEAD 2>/dev/null; then
-        warn "Local modifications detected in $INSTALL_DIR — they will be overwritten."
+        warn "Local modifications detected in $INSTALL_DIR — they will be overwritten if an update is needed."
     fi
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$REPO_BRANCH"
-    git -C "$INSTALL_DIR" reset --hard "origin/$REPO_BRANCH"
-    ok "Repository updated."
+    LOCAL_HEAD=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null || true)
+    REMOTE_HEAD=$(git -C "$INSTALL_DIR" rev-parse "origin/$REPO_BRANCH" 2>/dev/null || true)
+    if [ -n "$LOCAL_HEAD" ] && [ "$LOCAL_HEAD" = "$REMOTE_HEAD" ]; then
+        ok "Repository is already up to date — skipping update."
+    else
+        info "New commits found — updating to latest $REPO_BRANCH ..."
+        git -C "$INSTALL_DIR" reset --hard "origin/$REPO_BRANCH"
+        ok "Repository updated."
+    fi
+elif [ -d "$INSTALL_DIR" ]; then
+    warn "$INSTALL_DIR exists but is not a valid git repository — removing and re-cloning."
+    rm -rf "$INSTALL_DIR"
+    info "Cloning repository into $INSTALL_DIR ..."
+    git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    ok "Repository cloned."
 else
     info "Cloning repository into $INSTALL_DIR ..."
     git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
