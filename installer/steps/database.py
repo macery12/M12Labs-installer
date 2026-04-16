@@ -136,6 +136,155 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     return True
 
 
+def check_credentials(
+    db_host: str,
+    db_user: str,
+    db_pass: str,
+    db_port: str = "3306",
+) -> bool:
+    """Verify MySQL/MariaDB credentials without requiring the target database to exist.
+
+    Connects to the server without selecting any database so that
+    authentication can be validated independently of database existence.
+    This function is read-only and never creates any database objects.
+
+    The password is passed via the ``MYSQL_PWD`` environment variable so it
+    never appears in the process argument list.
+
+    Args:
+        db_host: MySQL/MariaDB host (e.g. ``127.0.0.1``).
+        db_user: Database user.
+        db_pass: Database password (never logged or persisted).
+        db_port: TCP port (default: ``"3306"``).
+
+    Returns:
+        ``True`` when authentication succeeds, ``False`` otherwise.
+    """
+    logger = get_logger()
+
+    if not shutil.which("mysql"):
+        logger.warning("check_credentials: mysql client not found")
+        return False
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = db_pass
+
+    try:
+        result = subprocess.run(
+            [
+                "mysql",
+                "-h", db_host,
+                "-P", str(db_port),
+                "-u", db_user,
+                "--connect-timeout", "10",
+                "-e", "SELECT 1;",
+            ],
+            env=env,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("check_credentials: connection timed out")
+        return False
+    except FileNotFoundError:
+        logger.warning("check_credentials: mysql binary not found")
+        return False
+
+    success = result.returncode == 0
+    if not success:
+        stderr = result.stderr.decode(errors="replace").strip()
+        logger.debug(
+            "check_credentials failed (exit %d): %s", result.returncode, stderr
+        )
+    return success
+
+
+def database_exists(
+    db_host: str,
+    db_name: str,
+    db_user: str,
+    db_pass: str,
+    db_port: str = "3306",
+) -> bool:
+    """Check whether a named database exists without connecting to it directly.
+
+    Queries ``information_schema.SCHEMATA`` so the check is entirely
+    read-only and never creates any database objects.  Call
+    :func:`check_credentials` first to confirm the credentials are valid
+    before calling this function.
+
+    The password is passed via the ``MYSQL_PWD`` environment variable so it
+    never appears in the process argument list.
+
+    Args:
+        db_host: MySQL/MariaDB host (e.g. ``127.0.0.1``).
+        db_name: Database name to look up.
+        db_user: Database user.
+        db_pass: Database password (never logged or persisted).
+        db_port: TCP port (default: ``"3306"``).
+
+    Returns:
+        ``True`` when the database exists and is visible to the user,
+        ``False`` when it does not exist or on error.
+    """
+    logger = get_logger()
+
+    if not shutil.which("mysql"):
+        logger.warning("database_exists: mysql client not found")
+        return False
+
+    # Validate the identifier before embedding it in SQL.  The same rules
+    # apply here as in setup_database – only alphanumeric + underscore chars
+    # are allowed, so injection via the name is impossible in practice, but
+    # we validate explicitly to make that guarantee clear.
+    id_error = _validate_identifier(db_name, "DB name")
+    if id_error:
+        logger.warning("database_exists: %s", id_error)
+        return False
+
+    # db_name is now guaranteed to be alphanumeric + underscores only.
+    sql = (
+        f"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA"
+        f" WHERE SCHEMA_NAME = '{db_name}' LIMIT 1;"
+    )
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = db_pass
+
+    try:
+        result = subprocess.run(
+            [
+                "mysql",
+                "-h", db_host,
+                "-P", str(db_port),
+                "-u", db_user,
+                "--connect-timeout", "10",
+                "-e", sql,
+            ],
+            env=env,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("database_exists: connection timed out")
+        return False
+    except FileNotFoundError:
+        logger.warning("database_exists: mysql binary not found")
+        return False
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        logger.debug(
+            "database_exists query failed (exit %d): %s", result.returncode, stderr
+        )
+        return False
+
+    stdout = result.stdout.decode(errors="replace")
+    return db_name in stdout
+
+
 def check_db_connection(
     db_host: str,
     db_name: str,
@@ -144,6 +293,11 @@ def check_db_connection(
     db_port: str = "3306",
 ) -> bool:
     """Test whether a database connection can be established with the given credentials.
+
+    This function is read-only and never creates any database objects.
+    If you need to distinguish between an authentication failure and a
+    missing database, use :func:`check_credentials` followed by
+    :func:`database_exists` instead.
 
     The password is passed via the ``MYSQL_PWD`` environment variable so it
     never appears in the process argument list.
