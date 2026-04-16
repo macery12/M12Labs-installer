@@ -20,6 +20,7 @@ Security:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -133,3 +134,65 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     logger.info("Step 3 complete: database and user created")
     print("  ✓ Database and user created.")
     return True
+
+
+def check_db_connection(
+    db_host: str,
+    db_name: str,
+    db_user: str,
+    db_pass: str,
+    db_port: str = "3306",
+) -> bool:
+    """Test whether a database connection can be established with the given credentials.
+
+    The password is passed via the ``MYSQL_PWD`` environment variable so it
+    never appears in the process argument list.
+
+    Args:
+        db_host: MySQL/MariaDB host (e.g. ``127.0.0.1``).
+        db_name: Database name to connect to.
+        db_user: Database user.
+        db_pass: Database password (never logged or persisted).
+        db_port: TCP port (default: ``"3306"``).
+
+    Returns:
+        ``True`` when the connection succeeds, ``False`` otherwise.
+    """
+    logger = get_logger()
+
+    if not shutil.which("mysql"):
+        logger.warning("check_db_connection: mysql client not found")
+        return False
+
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = db_pass
+
+    try:
+        result = subprocess.run(
+            [
+                "mysql",
+                "-h", db_host,
+                "-P", str(db_port),
+                "-u", db_user,
+                db_name,
+                "-e", "SELECT 1;",
+            ],
+            env=env,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("check_db_connection: connection timed out")
+        return False
+    except FileNotFoundError:
+        logger.warning("check_db_connection: mysql binary not found")
+        return False
+
+    success = result.returncode == 0
+    if not success:
+        stderr = result.stderr.decode(errors="replace").strip()
+        logger.debug(
+            "check_db_connection failed (exit %d): %s", result.returncode, stderr
+        )
+    return success
