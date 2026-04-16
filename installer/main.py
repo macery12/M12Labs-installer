@@ -45,6 +45,17 @@ def _pause_and_clear() -> None:
     os.system("clear")
 
 
+def _confirm_db_action(message: str) -> bool:
+    """Print *message* and return ``True`` if the user confirms with Y/Enter."""
+    print()
+    print(f"  {message}")
+    try:
+        answer = input("  Proceed? [Y/n]: ").strip().lower()
+    except EOFError:
+        answer = "n"
+    return answer in ("", "y", "yes")
+
+
 # directory prompt
 
 def _prompt_install_dir(cfg):
@@ -479,7 +490,7 @@ def _run_install_manual(cfg) -> int | None:
     from installer.log import get_logger, setup_logging
     from installer.steps.deps import install_dependencies
     from installer.steps.files import clone_panel, download_panel
-    from installer.steps.releases import DEVELOP_BRANCH_TAG
+    from installer.steps.releases import DEVELOP_BRANCH_TAG, DEVELOP_REPO_GIT_URL
     from installer.steps.database import check_credentials, database_exists, setup_database
     from installer.steps.laravel import configure_laravel
     from installer.steps.workers import configure_workers
@@ -548,8 +559,9 @@ def _run_install_manual(cfg) -> int | None:
                 print("  ✗ Stage 1 failed. See output above.")
 
         elif stage_idx == 1:
+            repo_git_url = cfg.selected_repo_git_url or DEVELOP_REPO_GIT_URL
             if is_develop:
-                ok = clone_panel(install_path)
+                ok = clone_panel(install_path, repo_url=repo_git_url)
             else:
                 ok = download_panel(install_path, release_url=cfg.selected_release_url or None)
             if ok:
@@ -601,7 +613,12 @@ def _run_install_manual(cfg) -> int | None:
                     completed[2] = True
                     print("  ✓ Database connected.")
             else:
-                if setup_database(cfg.db_name, cfg.db_user, db_pass):
+                # New credentials – confirm before creating the database and user.
+                if not _confirm_db_action(
+                    f"About to CREATE database '{cfg.db_name}' and MySQL user '{cfg.db_user}'."
+                ):
+                    print("  Database setup cancelled.")
+                elif setup_database(cfg.db_name, cfg.db_user, db_pass):
                     completed[2] = True
                     print("  ✓ Stage 3 complete.")
                 else:
@@ -666,7 +683,7 @@ def _run_install(cfg) -> int:
     from installer.log import get_logger, setup_logging
     from installer.steps.deps import install_dependencies
     from installer.steps.files import clone_panel, download_panel
-    from installer.steps.releases import DEVELOP_BRANCH_TAG
+    from installer.steps.releases import DEVELOP_BRANCH_TAG, DEVELOP_REPO_GIT_URL
     from installer.steps.database import setup_database
     from installer.steps.laravel import configure_laravel
     from installer.steps.workers import configure_workers
@@ -699,13 +716,23 @@ def _run_install(cfg) -> int:
         return 1
 
     if is_develop:
-        if not clone_panel(install_path):
+        repo_git_url = cfg.selected_repo_git_url or DEVELOP_REPO_GIT_URL
+        if not clone_panel(install_path, repo_url=repo_git_url):
             logger.error("Install aborted: Step 2 (clone) failed")
             print("\n✗ Installation failed at Step 2. See output above.")
             return 1
     elif not download_panel(install_path, release_url=cfg.selected_release_url or None):
         logger.error("Install aborted: Step 2 (download) failed")
         print("\n✗ Installation failed at Step 2. See output above.")
+        return 1
+
+    # Confirm before creating the database and user
+    if not _confirm_db_action(
+        f"About to CREATE database '{cfg.db_name}' and MySQL user '{cfg.db_user}'."
+    ):
+        db_pass = ""
+        logger.info("Install cancelled by user before database setup")
+        print("  Database setup cancelled.  Installation aborted.")
         return 1
 
     if not setup_database(cfg.db_name, cfg.db_user, db_pass):
@@ -885,6 +912,7 @@ def _run_update(cfg) -> int:
     print(f"  Install path    : {install_path}")
     print(f"  Current version : {f'v{old_ver}' if old_ver else 'unknown'}")
     print(f"  New version     : {new_ver_label}")
+    print(f"  DB migrations   : will run (migrate --seed --force)")
     print("─" * width)
     print()
     print("  Press Enter to start the update, or Ctrl+C to cancel.")
