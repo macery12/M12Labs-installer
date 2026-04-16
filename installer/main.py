@@ -291,11 +291,12 @@ def _prompt_backup_before_update(install_path: Path) -> bool:
 # manage backups sub-menu
 
 def _fmt_size(num_bytes: int) -> str:
+    size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB"):
-        if num_bytes < 1024:
-            return f"{num_bytes:.1f} {unit}"
-        num_bytes //= 1024
-    return f"{num_bytes:.1f} TB"
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
 
 
 def _manage_backups_menu(install_path: Path) -> None:
