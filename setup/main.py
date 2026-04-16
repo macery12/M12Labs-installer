@@ -91,10 +91,11 @@ def _show_menu() -> str:
     print("  2) Update")
     print("  3) Uninstall  (coming soon)")
     print("  4) Database Tools")
+    print("  5) Webserver")
     print("  q) Quit")
     print()
     try:
-        choice = input("  Select an option [1/2/3/4/q]: ").strip().lower()
+        choice = input("  Select an option [1/2/3/4/5/q]: ").strip().lower()
     except EOFError:
         choice = "q"
     return choice
@@ -188,6 +189,31 @@ def _database_tools(install_path: Path) -> None:
             break
         else:
             print("  Invalid option. Please enter 1, 2, or b.")
+
+
+# webserver sub-menu
+
+def _webserver_menu(install_path: Path) -> None:
+    while True:
+        print()
+        print("  Webserver:")
+        print("  ─────────────────────────────")
+        print("  1) NGINX")
+        print("  0) Back")
+        print()
+        try:
+            choice = input("  Select an option [1/0]: ").strip().lower()
+        except EOFError:
+            break
+
+        if choice == "1":
+            from setup.steps.nginx import configure_nginx
+            configure_nginx(install_path)
+            _pause_and_clear()
+        elif choice in ("0", "b", "back", "q"):
+            break
+        else:
+            print("  Invalid option. Please enter 1 or 0.")
 
 
 # install / update
@@ -474,12 +500,15 @@ def main() -> int:
         elif choice == "4":
             _database_tools(install_path)
 
+        elif choice == "5":
+            _webserver_menu(install_path)
+
         elif choice in ("q", "quit", "exit"):
             print("\nExiting installer. No changes were made.")
             return 0
 
         else:
-            print("  Invalid option. Please enter 1, 2, 3, 4, or q.")
+            print("  Invalid option. Please enter 1, 2, 3, 4, 5, or q.")
 
 
 if __name__ == "__main__":
