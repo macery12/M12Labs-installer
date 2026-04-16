@@ -177,7 +177,7 @@ def prompt_for_install_path(cfg: InstallConfig) -> InstallConfig:
     return cfg
 
 
-def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
+def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str, bool]:
     """Prompt for DB name/user (persisted) and password (in memory only).
 
     Before prompting, checks whether an ``.env`` already exists at the
@@ -186,7 +186,10 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
     supplying new ones.
 
     Returns:
-        A tuple of ``(updated_config, db_pass_plaintext)``.
+        A tuple of ``(updated_config, db_pass_plaintext, reused_existing)``.
+        ``reused_existing`` is ``True`` when the user chose to reuse
+        credentials already present in ``.env``, and ``False`` when new
+        credentials were supplied.
 
     **Security:** The returned password string is never saved to disk by
     this function.  The caller is responsible for passing it directly to
@@ -219,7 +222,7 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
                 cfg.db_user,
             )
             print("  Reusing existing DB credentials.")
-            return cfg, existing["db_pass"]
+            return cfg, existing["db_pass"], True
 
     raw_name = input(f"  DB name   [default: {cfg.db_name}]: ").strip()
     if raw_name:
@@ -245,7 +248,7 @@ def prompt_for_db_config(cfg: InstallConfig) -> tuple[InstallConfig, str]:
         cfg.db_name,
         cfg.db_user,
     )
-    return cfg, db_pass
+    return cfg, db_pass, False
 
 
 def prompt_for_release(cfg: InstallConfig) -> InstallConfig:

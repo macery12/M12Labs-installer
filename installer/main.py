@@ -454,6 +454,184 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
     print("─" * width)
 
 
+def _run_install_manual(cfg) -> int | None:
+    """Manual install: numbered stage list – the user picks stages to run one at a time.
+
+    Returns an exit code (0 = success, 1 = failure) or ``None`` when the
+    user goes back to the install submenu without completing the install.
+    """
+    from installer.config import prompt_for_db_config, prompt_for_release
+    from installer.log import get_logger, setup_logging
+    from installer.steps.deps import install_dependencies
+    from installer.steps.files import clone_panel, download_panel
+    from installer.steps.releases import DEVELOP_BRANCH_TAG
+    from installer.steps.database import check_db_connection, setup_database
+    from installer.steps.laravel import configure_laravel
+    from installer.steps.workers import configure_workers
+    from installer.system import read_env_value
+
+    cfg = prompt_for_release(cfg)
+    cfg, db_pass, reused_creds = prompt_for_db_config(cfg)
+
+    is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
+    setup_logging(cfg.install_path, cfg.text_logs_enabled)
+    logger = get_logger()
+    install_path: Path = cfg.install_path
+
+    logger.info(
+        "Manual install started: install_path=%s, release=%s",
+        install_path,
+        cfg.selected_release or "(default)",
+    )
+
+    STAGES = [
+        "Install system dependencies",
+        "Download panel files",
+        "Set up database",
+        "Configure Laravel",
+        "Configure workers",
+    ]
+    completed = [False] * len(STAGES)
+
+    while True:
+        print()
+        print("  Manual Install – select a stage to run:")
+        print("  ─────────────────────────────────────────")
+        for i, (label, done) in enumerate(zip(STAGES, completed), start=1):
+            mark = "✓" if done else " "
+            print(f"  {i}) [{mark}] {label}")
+        print("  0) Done / Back")
+        print()
+        try:
+            choice = input(f"  Select stage [1-{len(STAGES)}/0]: ").strip()
+        except EOFError:
+            db_pass = ""
+            return None
+
+        if choice == "0":
+            db_pass = ""
+            if all(completed):
+                logger.info("Manual install completed: install_path=%s", install_path)
+                _print_final_summary(install_path, cfg.db_name, cfg.db_user)
+                return 0
+            return None
+
+        if not choice.isdigit() or not (1 <= int(choice) <= len(STAGES)):
+            print(f"  Invalid option. Please enter 1–{len(STAGES)} or 0.")
+            continue
+
+        stage_idx = int(choice) - 1
+        stage_num = stage_idx + 1
+        print(f"\n  ─── Stage {stage_num}: {STAGES[stage_idx]} ───")
+
+        if stage_idx == 0:
+            if install_dependencies():
+                completed[0] = True
+                print("  ✓ Stage 1 complete.")
+            else:
+                logger.error("Manual install: Stage 1 (dependencies) failed")
+                print("  ✗ Stage 1 failed. See output above.")
+
+        elif stage_idx == 1:
+            if is_develop:
+                ok = clone_panel(install_path)
+            else:
+                ok = download_panel(install_path, release_url=cfg.selected_release_url or None)
+            if ok:
+                completed[1] = True
+                print("  ✓ Stage 2 complete.")
+            else:
+                logger.error("Manual install: Stage 2 (files) failed")
+                print("  ✗ Stage 2 failed. See output above.")
+
+        elif stage_idx == 2:
+            if reused_creds:
+                # Existing credentials chosen – just verify the connection.
+                env_path = install_path / ".env"
+                db_host = read_env_value(env_path, "DB_HOST") or "127.0.0.1"
+                db_port = read_env_value(env_path, "DB_PORT") or "3306"
+                print(
+                    f"  Reusing existing credentials – testing connection "
+                    f"({cfg.db_user}@{db_host}:{db_port}/{cfg.db_name})…"
+                )
+                ok = check_db_connection(
+                    db_host=db_host,
+                    db_port=db_port,
+                    db_name=cfg.db_name,
+                    db_user=cfg.db_user,
+                    db_pass=db_pass,
+                )
+                if ok:
+                    completed[2] = True
+                    print("  ✓ Database connected.")
+                else:
+                    logger.error("Manual install: Stage 3 DB connection test failed")
+                    print("  ✗ Database connection failed.")
+                    print(
+                        "    Check that MariaDB is running and the credentials"
+                        " in .env are correct."
+                    )
+            else:
+                if setup_database(cfg.db_name, cfg.db_user, db_pass):
+                    completed[2] = True
+                    print("  ✓ Stage 3 complete.")
+                else:
+                    logger.error("Manual install: Stage 3 (database) failed")
+                    print("  ✗ Stage 3 failed. See output above.")
+
+        elif stage_idx == 3:
+            if configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
+                completed[3] = True
+                db_pass = ""  # written to .env; clear from memory
+                print("  ✓ Stage 4 complete.")
+            else:
+                logger.error("Manual install: Stage 4 (Laravel) failed")
+                print("  ✗ Stage 4 failed. See output above.")
+
+        elif stage_idx == 4:
+            if configure_workers(install_path):
+                completed[4] = True
+                print("  ✓ Stage 5 complete.")
+            else:
+                logger.error("Manual install: Stage 5 (workers) failed")
+                print("  ✗ Stage 5 failed. See output above.")
+
+        _pause_and_clear()
+
+
+def _install_submenu(cfg) -> int | None:
+    """Show the Install submenu (Automatic / Manual / Back).
+
+    Returns an exit code when the install completes, or ``None`` when the
+    user selects Back so the caller can return to the main menu.
+    """
+    while True:
+        print()
+        print("  Install:")
+        print("  ─────────────────────────────")
+        print("  1) Automatic")
+        print("  2) Manual")
+        print("  0) Back")
+        print()
+        try:
+            choice = input("  Select an option [1/2/0]: ").strip().lower()
+        except EOFError:
+            return None
+
+        if choice == "1":
+            return _run_install(cfg)
+        elif choice == "2":
+            result = _run_install_manual(cfg)
+            if result is None:
+                # User quit from within the manual flow; go back to this submenu.
+                continue
+            return result
+        elif choice in ("0", "b", "back", "q"):
+            return None
+        else:
+            print("  Invalid option. Please enter 1, 2, or 0.")
+
+
 def _run_install(cfg) -> int:
     from installer.config import prompt_for_db_config, prompt_for_release
     from installer.log import get_logger, setup_logging
@@ -465,7 +643,7 @@ def _run_install(cfg) -> int:
     from installer.steps.workers import configure_workers
 
     cfg = prompt_for_release(cfg)
-    cfg, db_pass = prompt_for_db_config(cfg)
+    cfg, db_pass, _ = prompt_for_db_config(cfg)
 
     is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
 
@@ -524,6 +702,34 @@ def _run_install(cfg) -> int:
     return 0
 
 
+def _prompt_manual_db_creds_for_update() -> dict[str, str]:
+    """Prompt the user to enter database connection credentials manually.
+
+    Used during the update flow when the user declines to use existing
+    ``.env`` credentials or when no credentials are available.
+
+    Returns a dict with keys ``db_host``, ``db_port``, ``db_name``,
+    ``db_user``, and ``db_pass``.
+    """
+    print("\n  Enter database credentials for the connection check:")
+    try:
+        db_host = input("  DB host   [default: 127.0.0.1]: ").strip() or "127.0.0.1"
+        db_port = input("  DB port   [default: 3306]:      ").strip() or "3306"
+        db_name = input("  DB name:  ").strip()
+        db_user = input("  DB user:  ").strip()
+        db_pass = input("  DB pass:  ").strip()
+    except EOFError:
+        print("\n  (Input closed – skipping credential entry.)")
+        db_host, db_port, db_name, db_user, db_pass = "127.0.0.1", "3306", "", "", ""
+    return {
+        "db_host": db_host,
+        "db_port": db_port,
+        "db_name": db_name,
+        "db_user": db_user,
+        "db_pass": db_pass,
+    }
+
+
 def _run_update(cfg) -> int:
     from installer.config import read_db_credentials_from_env, prompt_for_release
     from installer.log import get_logger, setup_logging
@@ -543,23 +749,61 @@ def _run_update(cfg) -> int:
         db_port = read_env_value(env_path, "DB_PORT") or "3306"
 
         if creds["db_pass"]:
+            # Show the existing credentials and ask the user whether to use them.
+            print(f"\n  Existing DB credentials found in {env_path}:")
+            print(f"    DB name : {creds['db_name'] or '(empty)'}")
+            print(f"    DB user : {creds['db_user'] or '(empty)'}")
+            print(f"    DB host : {db_host}:{db_port}")
+            print("    DB pass : (hidden)")
+            try:
+                answer = input("  Use these DB credentials? [Y/n]: ").strip().lower()
+            except EOFError:
+                answer = ""
+
+            if answer not in ("n", "no"):
+                # Use credentials from .env
+                check_host = db_host
+                check_port = db_port
+                check_name = creds["db_name"]
+                check_user = creds["db_user"]
+                check_pass = creds["db_pass"]
+                if check_name:
+                    cfg.db_name = check_name
+                if check_user:
+                    cfg.db_user = check_user
+            else:
+                # User declined – allow manual entry before the check
+                manual = _prompt_manual_db_creds_for_update()
+                check_host = manual["db_host"]
+                check_port = manual["db_port"]
+                check_name = manual["db_name"]
+                check_user = manual["db_user"]
+                check_pass = manual["db_pass"]
+        else:
+            print("  Note: DB credentials not found in .env.")
+            print("  Please enter credentials manually for the connection check.")
+            manual = _prompt_manual_db_creds_for_update()
+            check_host = manual["db_host"]
+            check_port = manual["db_port"]
+            check_name = manual["db_name"]
+            check_user = manual["db_user"]
+            check_pass = manual["db_pass"]
+
+        if check_pass:
             print(
                 f"\n  Checking database connection "
-                f"({creds['db_user']}@{db_host}:{db_port}/{creds['db_name']})…"
+                f"({check_user}@{check_host}:{check_port}/{check_name})…"
             )
             ok = check_db_connection(
-                db_host=db_host,
-                db_port=db_port,
-                db_name=creds["db_name"],
-                db_user=creds["db_user"],
-                db_pass=creds["db_pass"],
+                db_host=check_host,
+                db_port=check_port,
+                db_name=check_name,
+                db_user=check_user,
+                db_pass=check_pass,
             )
+            check_pass = ""  # clear from memory
             if ok:
                 print("  ✓ Database connection successful.")
-                if creds["db_name"]:
-                    cfg.db_name = creds["db_name"]
-                if creds["db_user"]:
-                    cfg.db_user = creds["db_user"]
             else:
                 print("  ✗ Database connection check failed.")
                 print(
@@ -570,7 +814,7 @@ def _run_update(cfg) -> int:
                 _pause_and_clear()
                 return 1
         else:
-            print("  Note: DB credentials not found in .env – skipping database check.")
+            print("  Note: no DB password provided – skipping database check.")
     else:
         print("  Note: .env not found – skipping database check.")
 
@@ -701,7 +945,10 @@ def main() -> int:
         choice = _show_menu()
 
         if choice == "1":
-            return _run_install(cfg)
+            result = _install_submenu(cfg)
+            if result is not None:
+                return result
+            # None means Back – redisplay the main menu.
 
         elif choice == "2":
             if state == "fresh":
