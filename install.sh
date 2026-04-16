@@ -117,9 +117,9 @@ fi
 # Write the command wrapper
 # ---------------------------------------------------------------------------
 
-# Running  python3 /path/to/installer/main.py  works because Python adds the
-# script's parent directory (installer/) to sys.path automatically, which lets
-# the installer's internal "from build import …" style imports resolve.
+# Running  python3 /path/to/installer/main.py  works because the main.py
+# script adds the repo root to sys.path, which lets the installer's
+# internal "from installer.X import …" style imports resolve.
 cat > "$COMMAND_PATH" <<EOF
 #!/bin/sh
 exec python3 "$INSTALL_DIR/installer/main.py" "\$@"

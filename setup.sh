@@ -20,7 +20,7 @@
 #   2. Clones the macery12/M12Labs-installer repo (or updates it if already cloned).
 #   3. Asks for confirmation before performing any privileged work.
 #   4. Re-executes itself with sudo if not already running as root.
-#   5. Runs python3 -m setup.main inside the repo directory.
+#   5. Runs python3 -m installer.main inside the repo directory.
 
 set -euo pipefail
 
@@ -145,4 +145,4 @@ fi
 cd "$INSTALL_DIR"
 info "Launching M12Labs installer..."
 printf '\n'
-exec python3 -m setup.main "$@"
+exec python3 -m installer.main "$@"

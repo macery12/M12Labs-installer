@@ -1,7 +1,7 @@
 """System helpers for the M12Labs panel installer.
 
 Provides command execution, package management, and privilege helpers.
-Modelled after installer/build.py but without Node/pnpm-specific logic.
+Modelled after archive/installer/build.py but without Node/pnpm-specific logic.
 
 Public API::
 

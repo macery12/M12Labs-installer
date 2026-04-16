@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from setup.system import install_packages, with_privilege
+from installer.system import install_packages, with_privilege
 
 _CONF_TEMPLATE = Path(__file__).resolve().parent.parent / "panel.conf"
 _NGINX_SITES_AVAILABLE = Path("/etc/nginx/sites-available")

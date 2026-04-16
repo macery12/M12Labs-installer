@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import shutil
 
-from setup.log import get_logger
-from setup.system import (
+from installer.log import get_logger
+from installer.system import (
     get_package_manager,
     install_packages,
     run_command_no_cwd,

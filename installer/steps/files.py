@@ -18,8 +18,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from setup.log import get_logger
-from setup.system import run_command, run_command_no_cwd, with_privilege
+from installer.log import get_logger
+from installer.system import run_command, run_command_no_cwd, with_privilege
 
 # Fixed release URL for v2.0.0-m12-rc2.6.
 # Update this constant when a new panel version is released.

@@ -1,7 +1,7 @@
-"""File logging setup for the M12 Labs installer.
+"""File logging setup for the M12Labs panel installer.
 
-Provides a single named logger (``m12labs``) that writes verbose debug output
-to a timestamped text file under ``<panel_root>/extension_logs/``.
+Provides a single named logger (``m12labs.setup``) that writes verbose debug
+output to a timestamped text file under ``<install_path>/setup_logs/``.
 
 Console output is intentionally **not** handled here – all user-facing output
 is produced by ``print()`` calls throughout the codebase.  The logger is for
@@ -10,13 +10,13 @@ the terminal.
 
 Usage::
 
-    from log import setup_logging, get_logger
+    from installer.log import setup_logging, get_logger
 
     # Call once at startup (after install_path and config are known):
     setup_logging(install_path, text_logs_enabled=True)
 
     # In any other module:
-    from log import get_logger
+    from installer.log import get_logger
     logger = get_logger()
     logger.debug("Something happened: %s", detail)
 """
@@ -27,19 +27,19 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-LOG_DIR_NAME = "extension_logs"
+LOG_DIR_NAME = "setup_logs"
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-_LOGGER_NAME = "m12labs"
+_LOGGER_NAME = "m12labs.setup"
 
 
 def setup_logging(install_path: Path | None, text_logs_enabled: bool) -> logging.Logger:
-    """Configure and return the ``m12labs`` logger.
+    """Configure and return the ``m12labs.setup`` logger.
 
     When *text_logs_enabled* is ``True`` and *install_path* is set, a
     ``FileHandler`` is attached that writes every DEBUG-and-above message to::
 
-        <install_path>/extension_logs/logs-YYYY-MM-DD_HH-MM-SS.txt
+        <install_path>/setup_logs/logs-YYYY-MM-DD_HH-MM-SS.txt
 
     The log directory is created automatically if it does not exist.
 
@@ -48,9 +48,9 @@ def setup_logging(install_path: Path | None, text_logs_enabled: bool) -> logging
     """
     logger = logging.getLogger(_LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
-    # Remove any handlers added by a previous call (e.g. during tests).
+    # Remove any handlers added by a previous call (e.g. during tests)
     logger.handlers.clear()
-    # Prevent log records from propagating to the root logger.
+    # Prevent log records from propagating to the root logger
     logger.propagate = False
 
     if text_logs_enabled and install_path is not None:
@@ -64,15 +64,14 @@ def setup_logging(install_path: Path | None, text_logs_enabled: bool) -> logging
             file_handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
             logger.addHandler(file_handler)
         except OSError:
-            # If the log directory or file cannot be created, silently
-            # continue without file logging rather than crashing the installer.
+            # If the log directory or file cannot be created, continue without file logging
             pass
 
     return logger
 
 
 def get_logger() -> logging.Logger:
-    """Return the ``m12labs`` application logger.
+    """Return the ``m12labs.setup`` application logger.
 
     The logger must have been configured via :func:`setup_logging` before
     calling this function.  If it has not been configured yet, log records

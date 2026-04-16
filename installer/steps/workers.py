@@ -12,8 +12,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from setup.log import get_logger
-from setup.system import run_command_no_cwd, with_privilege
+from installer.log import get_logger
+from installer.system import run_command_no_cwd, with_privilege
 
 _CRON_ENTRY_TEMPLATE = (
     "* * * * * php {artisan} schedule:run >> /dev/null 2>&1"
