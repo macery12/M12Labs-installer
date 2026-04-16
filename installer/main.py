@@ -455,22 +455,23 @@ def _print_final_summary(install_path: Path, db_name: str, db_user: str) -> None
 
 
 def _run_install_manual(cfg) -> int | None:
-    """Manual install: prompt the user before running each stage.
+    """Manual install: numbered stage list – the user picks stages to run one at a time.
 
     Returns an exit code (0 = success, 1 = failure) or ``None`` when the
-    user quits back to the install submenu without completing the install.
+    user goes back to the install submenu without completing the install.
     """
     from installer.config import prompt_for_db_config, prompt_for_release
     from installer.log import get_logger, setup_logging
     from installer.steps.deps import install_dependencies
     from installer.steps.files import clone_panel, download_panel
     from installer.steps.releases import DEVELOP_BRANCH_TAG
-    from installer.steps.database import setup_database
+    from installer.steps.database import check_db_connection, setup_database
     from installer.steps.laravel import configure_laravel
     from installer.steps.workers import configure_workers
+    from installer.system import read_env_value
 
     cfg = prompt_for_release(cfg)
-    cfg, db_pass = prompt_for_db_config(cfg)
+    cfg, db_pass, reused_creds = prompt_for_db_config(cfg)
 
     is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
     setup_logging(cfg.install_path, cfg.text_logs_enabled)
@@ -483,85 +484,119 @@ def _run_install_manual(cfg) -> int | None:
         cfg.selected_release or "(default)",
     )
 
-    def _stage_prompt(num: int, total: int, label: str) -> str:
-        """Print a stage header and return 'run', 'skip', or 'quit'."""
+    STAGES = [
+        "Install system dependencies",
+        "Download panel files",
+        "Set up database",
+        "Configure Laravel",
+        "Configure workers",
+    ]
+    completed = [False] * len(STAGES)
+
+    while True:
         print()
-        print(f"  ─── Stage {num}/{total}: {label} " + "─" * max(0, 38 - len(label)))
+        print("  Manual Install – select a stage to run:")
+        print("  ─────────────────────────────────────────")
+        for i, (label, done) in enumerate(zip(STAGES, completed), start=1):
+            mark = "✓" if done else " "
+            print(f"  {i}) [{mark}] {label}")
+        print("  0) Done / Back")
+        print()
         try:
-            answer = input("  Run this stage? [Y/n/q to abort]: ").strip().lower()
+            choice = input(f"  Select stage [1-{len(STAGES)}/0]: ").strip()
         except EOFError:
-            answer = "y"
-        if answer in ("q", "quit", "0"):
-            return "quit"
-        if answer in ("n", "no", "s", "skip"):
-            return "skip"
-        return "run"
-
-    total = 5
-
-    # Stage 1: dependencies
-    action = _stage_prompt(1, total, "Install system dependencies")
-    if action == "quit":
-        return None
-    if action == "run":
-        if not install_dependencies():
-            logger.error("Manual install: dependencies failed")
-            print("\n✗ Stage 1 failed. See output above.")
-            return 1
-
-    # Stage 2: panel files
-    action = _stage_prompt(2, total, "Download panel files")
-    if action == "quit":
-        return None
-    if action == "run":
-        if is_develop:
-            ok = clone_panel(install_path)
-        else:
-            ok = download_panel(install_path, release_url=cfg.selected_release_url or None)
-        if not ok:
-            logger.error("Manual install: file download/clone failed")
-            print("\n✗ Stage 2 failed. See output above.")
-            return 1
-
-    # Stage 3: database
-    action = _stage_prompt(3, total, "Set up database")
-    if action == "quit":
-        db_pass = ""
-        return None
-    if action == "run":
-        if not setup_database(cfg.db_name, cfg.db_user, db_pass):
-            logger.error("Manual install: database setup failed")
-            print("\n✗ Stage 3 failed. See output above.")
             db_pass = ""
-            return 1
+            return None
 
-    # Stage 4: Laravel
-    action = _stage_prompt(4, total, "Configure Laravel")
-    if action == "quit":
-        db_pass = ""
-        return None
-    if action == "run":
-        if not configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
-            logger.error("Manual install: Laravel configuration failed")
-            print("\n✗ Stage 4 failed. See output above.")
+        if choice == "0":
             db_pass = ""
-            return 1
+            if all(completed):
+                logger.info("Manual install completed: install_path=%s", install_path)
+                _print_final_summary(install_path, cfg.db_name, cfg.db_user)
+                return 0
+            return None
 
-    db_pass = ""  # no longer needed after stage 4
+        if not choice.isdigit() or not (1 <= int(choice) <= len(STAGES)):
+            print(f"  Invalid option. Please enter 1–{len(STAGES)} or 0.")
+            continue
 
-    # Stage 5: workers
-    action = _stage_prompt(5, total, "Configure workers")
-    if action == "quit":
-        return None
-    if action == "run":
-        if not configure_workers(install_path):
-            logger.error("Manual install: worker configuration failed")
-            print("\n✗ Stage 5 failed. See output above.")
-            return 1
+        stage_idx = int(choice) - 1
+        stage_num = stage_idx + 1
+        print(f"\n  ─── Stage {stage_num}: {STAGES[stage_idx]} ───")
 
-    logger.info("Manual install completed successfully: install_path=%s", install_path)
-    _print_final_summary(install_path, cfg.db_name, cfg.db_user)
-    return 0
+        if stage_idx == 0:
+            if install_dependencies():
+                completed[0] = True
+                print("  ✓ Stage 1 complete.")
+            else:
+                logger.error("Manual install: Stage 1 (dependencies) failed")
+                print("  ✗ Stage 1 failed. See output above.")
+
+        elif stage_idx == 1:
+            if is_develop:
+                ok = clone_panel(install_path)
+            else:
+                ok = download_panel(install_path, release_url=cfg.selected_release_url or None)
+            if ok:
+                completed[1] = True
+                print("  ✓ Stage 2 complete.")
+            else:
+                logger.error("Manual install: Stage 2 (files) failed")
+                print("  ✗ Stage 2 failed. See output above.")
+
+        elif stage_idx == 2:
+            if reused_creds:
+                # Existing credentials chosen – just verify the connection.
+                env_path = install_path / ".env"
+                db_host = read_env_value(env_path, "DB_HOST") or "127.0.0.1"
+                db_port = read_env_value(env_path, "DB_PORT") or "3306"
+                print(
+                    f"  Reusing existing credentials – testing connection "
+                    f"({cfg.db_user}@{db_host}:{db_port}/{cfg.db_name})…"
+                )
+                ok = check_db_connection(
+                    db_host=db_host,
+                    db_port=db_port,
+                    db_name=cfg.db_name,
+                    db_user=cfg.db_user,
+                    db_pass=db_pass,
+                )
+                if ok:
+                    completed[2] = True
+                    print("  ✓ Database connected.")
+                else:
+                    logger.error("Manual install: Stage 3 DB connection test failed")
+                    print("  ✗ Database connection failed.")
+                    print(
+                        "    Check that MariaDB is running and the credentials"
+                        " in .env are correct."
+                    )
+            else:
+                if setup_database(cfg.db_name, cfg.db_user, db_pass):
+                    completed[2] = True
+                    print("  ✓ Stage 3 complete.")
+                else:
+                    logger.error("Manual install: Stage 3 (database) failed")
+                    print("  ✗ Stage 3 failed. See output above.")
+
+        elif stage_idx == 3:
+            if configure_laravel(install_path, cfg.db_name, cfg.db_user, db_pass):
+                completed[3] = True
+                db_pass = ""  # written to .env; clear from memory
+                print("  ✓ Stage 4 complete.")
+            else:
+                logger.error("Manual install: Stage 4 (Laravel) failed")
+                print("  ✗ Stage 4 failed. See output above.")
+
+        elif stage_idx == 4:
+            if configure_workers(install_path):
+                completed[4] = True
+                print("  ✓ Stage 5 complete.")
+            else:
+                logger.error("Manual install: Stage 5 (workers) failed")
+                print("  ✗ Stage 5 failed. See output above.")
+
+        _pause_and_clear()
 
 
 def _install_submenu(cfg) -> int | None:
@@ -608,7 +643,7 @@ def _run_install(cfg) -> int:
     from installer.steps.workers import configure_workers
 
     cfg = prompt_for_release(cfg)
-    cfg, db_pass = prompt_for_db_config(cfg)
+    cfg, db_pass, _ = prompt_for_db_config(cfg)
 
     is_develop = cfg.selected_release == DEVELOP_BRANCH_TAG
 
@@ -684,6 +719,7 @@ def _prompt_manual_db_creds_for_update() -> dict[str, str]:
         db_user = input("  DB user:  ").strip()
         db_pass = input("  DB pass:  ").strip()
     except EOFError:
+        print("\n  (Input closed – skipping credential entry.)")
         db_host, db_port, db_name, db_user, db_pass = "127.0.0.1", "3306", "", "", ""
     return {
         "db_host": db_host,
