@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -104,10 +105,11 @@ def _show_menu() -> str:
     print("  4) Database Tools")
     print("  5) Webserver")
     print("  6) Manage Backups")
+    print("  7) Diagnostics")
     print("  q) Quit")
     print()
     try:
-        choice = input("  Select an option [1/2/3/4/5/6/q]: ").strip().lower()
+        choice = input("  Select an option [1/2/3/4/5/6/7/q]: ").strip().lower()
     except EOFError:
         choice = "q"
     return choice
@@ -346,7 +348,7 @@ def _fmt_backup_label(path: "Path") -> str:
     formats it as ``YYYY-MM-DD HH:MM:SS UTC``.  Falls back to the raw
     filename if the stamp cannot be parsed.
     """
-    import re, datetime as _dt
+    import datetime as _dt
     m = re.search(r"(\d{8})_(\d{6})", path.stem)
     if m:
         try:
@@ -462,6 +464,256 @@ def _manage_backups_menu(install_path: Path) -> None:
 
         else:
             print("  Invalid option. Please enter d, r, or b.")
+
+
+# diagnostics
+
+# Panel log file path (relative to install_path).
+_PANEL_LOG_RELATIVE = Path("storage") / "logs" / "laravel.log"
+# Number of lines to tail from the panel log.
+_PANEL_LOG_TAIL_LINES = 50
+
+
+def _tail_file(path: Path, n: int) -> list[str]:
+    """Return the last *n* lines of *path*, or an empty list when unreadable."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = text.splitlines()
+    return lines[-n:] if len(lines) > n else lines
+
+
+def _run_diagnostics(install_path: Path, cfg) -> None:
+    """Gather and display diagnostic information for support / debugging.
+
+    Information is presented in this order so the most actionable panel
+    details appear first:
+
+    1. Panel status & version
+    2. Panel log (last :data:`_PANEL_LOG_TAIL_LINES` lines)
+    3. Key directory permissions
+    4. Service status (PHP, PHP-FPM, MariaDB, Nginx)
+    5. System overview (OS, disk, RAM)
+    6. Installer configuration summary
+    7. Installer log file locations
+    """
+    from installer.steps.files import detect_panel_state, read_installed_version
+
+    width = 60
+    sep = "─" * width
+
+    print()
+    print("=" * width)
+    print("  M12Labs Diagnostics")
+    print("=" * width)
+
+    # ------------------------------------------------------------------ #
+    # 1. Panel status
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print("  Panel Status")
+    print(sep)
+
+    state = detect_panel_state(install_path)
+    state_label = {
+        "existing": "Installed (panel + .env found)",
+        "partial":  "Partial (panel files present, .env missing)",
+        "fresh":    "Not installed (no panel files found)",
+    }.get(state, state)
+    print(f"  Install path : {install_path}")
+    print(f"  State        : {state_label}")
+
+    version = read_installed_version(install_path)
+    print(f"  Version      : {f'v{version}' if version else 'unknown / not installed'}")
+
+    env_path = install_path / ".env"
+    print(f"  .env present : {'Yes' if env_path.exists() else 'No'}")
+
+    # ------------------------------------------------------------------ #
+    # 2. Panel log
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print(f"  Panel Log  ({_PANEL_LOG_RELATIVE})")
+    print(sep)
+
+    panel_log = install_path / _PANEL_LOG_RELATIVE
+    if panel_log.exists():
+        print(f"  Log file : {panel_log}")
+        try:
+            size = panel_log.stat().st_size
+            print(f"  Size     : {_fmt_size(size)}")
+        except OSError:
+            pass
+        lines = _tail_file(panel_log, _PANEL_LOG_TAIL_LINES)
+        if lines:
+            print(f"  Last {_PANEL_LOG_TAIL_LINES} lines:")
+            print()
+            for line in lines:
+                print(f"    {line}")
+        else:
+            print("  (log file is empty)")
+    else:
+        print(f"  Panel log not found at {panel_log}")
+        print("  (Panel may not be installed or has never produced log output.)")
+
+    # ------------------------------------------------------------------ #
+    # 3. Key directory permissions
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print("  Key Directory / File Permissions")
+    print(sep)
+
+    check_paths = [
+        install_path,
+        install_path / "storage",
+        install_path / "storage" / "logs",
+        install_path / "bootstrap" / "cache",
+        install_path / ".env",
+    ]
+    for p in check_paths:
+        if p.exists():
+            try:
+                st = p.stat()
+                import stat as _stat
+                mode_str = _stat.filemode(st.st_mode)
+                try:
+                    import pwd as _pwd, grp as _grp
+                    owner = _pwd.getpwuid(st.st_uid).pw_name
+                    group = _grp.getgrgid(st.st_gid).gr_name
+                except Exception:
+                    owner = str(st.st_uid)
+                    group = str(st.st_gid)
+                print(f"  {mode_str}  {owner}:{group}  {p}")
+            except OSError:
+                print(f"  (could not stat {p})")
+        else:
+            print(f"  (not found) {p}")
+
+    # ------------------------------------------------------------------ #
+    # 4. Service status
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print("  Service Status")
+    print(sep)
+
+    def _service_status(service: str) -> str:
+        if not shutil.which("systemctl"):
+            return "systemctl not available"
+        result = subprocess.run(
+            ["systemctl", "is-active", service],
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip() or result.stderr.strip() or "unknown"
+
+    # PHP CLI version
+    php_ver = "not found"
+    if shutil.which("php"):
+        r = subprocess.run(["php", "--version"], capture_output=True, text=True)
+        first_line = (r.stdout or r.stderr or "").splitlines()
+        php_ver = first_line[0].strip() if first_line else "unknown"
+    print(f"  PHP CLI          : {php_ver}")
+
+    # PHP-FPM – try common service names
+    for fpm_svc in ("php8.3-fpm", "php8.2-fpm", "php8.1-fpm", "php-fpm"):
+        fpm_status = _service_status(fpm_svc)
+        if fpm_status not in ("inactive", "unknown", "systemctl not available"):
+            print(f"  PHP-FPM ({fpm_svc}) : {fpm_status}")
+            break
+    else:
+        fpm_status = _service_status("php8.3-fpm")
+        print(f"  PHP-FPM          : {fpm_status}")
+
+    print(f"  MariaDB          : {_service_status('mariadb')}")
+    print(f"  Nginx            : {_service_status('nginx')}")
+
+    # ------------------------------------------------------------------ #
+    # 5. System overview
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print("  System Overview")
+    print(sep)
+
+    print(f"  OS               : {platform.platform()}")
+    print(f"  Python           : {platform.python_version()}")
+
+    # Disk usage for install_path (or its parent when it doesn't exist)
+    disk_target = install_path if install_path.exists() else install_path.parent
+    try:
+        disk = shutil.disk_usage(disk_target)
+        print(
+            f"  Disk ({disk_target}) : "
+            f"{_fmt_size(disk.free)} free / {_fmt_size(disk.total)} total"
+        )
+    except OSError:
+        print("  Disk             : (could not determine)")
+
+    # Memory (Linux /proc/meminfo)
+    try:
+        meminfo = Path("/proc/meminfo").read_text(encoding="utf-8")
+        def _meminfo_kb(key: str) -> int | None:
+            m = re.search(rf"^{key}:\s+(\d+)", meminfo, re.MULTILINE)
+            return int(m.group(1)) * 1024 if m else None
+        mem_total = _meminfo_kb("MemTotal")
+        mem_avail = _meminfo_kb("MemAvailable")
+        if mem_total and mem_avail:
+            print(
+                f"  RAM              : "
+                f"{_fmt_size(mem_avail)} available / {_fmt_size(mem_total)} total"
+            )
+    except OSError:
+        pass
+
+    # ------------------------------------------------------------------ #
+    # 6. Installer configuration summary
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print("  Installer Configuration")
+    print(sep)
+    print(f"  Install path     : {cfg.install_path}")
+    print(f"  DB name          : {cfg.db_name}")
+    print(f"  DB user          : {cfg.db_user}")
+    print(f"  Selected release : {cfg.selected_release or '(none – use default)'}")
+    print(f"  Non-interactive  : {cfg.non_interactive}")
+    print(f"  Text logs        : {cfg.text_logs_enabled}")
+
+    # ------------------------------------------------------------------ #
+    # 7. Installer log files
+    # ------------------------------------------------------------------ #
+    print()
+    print(sep)
+    print("  Installer Log Files")
+    print(sep)
+
+    from installer.log import LOG_DIR_NAME
+    log_dir = cfg.install_path / LOG_DIR_NAME
+    if log_dir.is_dir():
+        log_files = sorted(log_dir.glob("*.txt"), reverse=True)
+        if log_files:
+            print(f"  Logs directory : {log_dir}")
+            for lf in log_files[:5]:
+                try:
+                    sz = _fmt_size(lf.stat().st_size)
+                except OSError:
+                    sz = "?"
+                print(f"    {lf.name}  ({sz})")
+            if len(log_files) > 5:
+                print(f"    … and {len(log_files) - 5} more")
+        else:
+            print(f"  Logs directory exists but contains no log files: {log_dir}")
+    else:
+        print(f"  No installer logs found (expected at {log_dir})")
+
+    print()
+    print("=" * width)
+    _pause_and_clear()
 
 
 # install / update
@@ -1046,12 +1298,15 @@ def main() -> int:
         elif choice == "6":
             _manage_backups_menu(install_path)
 
+        elif choice == "7":
+            _run_diagnostics(install_path, cfg)
+
         elif choice in ("q", "quit", "exit"):
             print("\nExiting installer. No changes were made.")
             return 0
 
         else:
-            print("  Invalid option. Please enter 1, 2, 3, 4, 5, 6, or q.")
+            print("  Invalid option. Please enter 1, 2, 3, 4, 5, 6, 7, or q.")
 
 
 if __name__ == "__main__":
