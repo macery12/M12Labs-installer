@@ -468,10 +468,13 @@ def _manage_backups_menu(install_path: Path) -> None:
 
 # diagnostics
 
-# Panel log file path (relative to install_path).
-_PANEL_LOG_RELATIVE = Path("storage") / "logs" / "laravel.log"
+# Directory (relative to install_path) where Laravel writes daily log files.
+_PANEL_LOGS_DIR = Path("storage") / "logs"
 # Number of lines to tail from the panel log.
 _PANEL_LOG_TAIL_LINES = 50
+
+# paste.rs upload endpoint
+_PASTE_RS_URL = "https://paste.rs/"
 
 
 def _tail_file(path: Path, n: int) -> list[str]:
@@ -484,6 +487,64 @@ def _tail_file(path: Path, n: int) -> list[str]:
     return lines[-n:] if len(lines) > n else lines
 
 
+def _find_latest_panel_log(install_path: Path) -> Path | None:
+    """Return the most recent Laravel log file under *install_path*/storage/logs/.
+
+    Laravel writes daily log files named ``laravel-YYYY-MM-DD.log``.  This
+    function finds the most recent one by filename (lexicographic sort is
+    correct for ISO-date filenames).  Falls back to ``laravel.log`` when no
+    dated files are present.  Returns ``None`` when the logs directory does
+    not exist or contains no recognisable log file.
+    """
+    log_dir = install_path / _PANEL_LOGS_DIR
+    if not log_dir.is_dir():
+        return None
+
+    # Collect dated log files: laravel-YYYY-MM-DD.log
+    dated = sorted(
+        log_dir.glob("laravel-????-??-??.log"),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if dated:
+        return dated[0]
+
+    # Fall back to the non-dated file if it exists
+    fallback = log_dir / "laravel.log"
+    return fallback if fallback.exists() else None
+
+
+def _upload_to_paste_rs(content: str) -> tuple[bool, str]:
+    """Upload *content* to paste.rs and return ``(success, url_or_error)``.
+
+    Returns ``(True, url)`` on HTTP 201 (created) or 206 (partial upload).
+    Returns ``(False, error_message)`` on any other response or network error.
+    """
+    import urllib.request
+    import urllib.error
+
+    data = content.encode("utf-8")
+    req = urllib.request.Request(
+        _PASTE_RS_URL,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "text/plain; charset=utf-8"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.status
+            url = resp.read().decode("utf-8").strip()
+            if status in (201, 206):
+                return True, url
+            return False, f"Unexpected HTTP {status}: {url}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}: {exc.reason}"
+    except urllib.error.URLError as exc:
+        return False, f"Network error: {exc.reason}"
+    except OSError as exc:
+        return False, f"Error: {exc}"
+
+
 def _run_diagnostics(install_path: Path, cfg) -> None:
     """Gather and display diagnostic information for support / debugging.
 
@@ -491,30 +552,46 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
     details appear first:
 
     1. Panel status & version
-    2. Panel log (last :data:`_PANEL_LOG_TAIL_LINES` lines)
+    2. Panel log (last :data:`_PANEL_LOG_TAIL_LINES` lines of the most recent
+       ``laravel-YYYY-MM-DD.log`` file)
     3. Key directory permissions
     4. Service status (PHP, PHP-FPM, MariaDB, Nginx)
     5. System overview (OS, disk, RAM)
     6. Installer configuration summary
     7. Installer log file locations
+
+    After displaying the report the user is asked whether to upload it to
+    paste.rs for easy sharing.
     """
+    import io as _io
     from installer.steps.files import detect_panel_state, read_installed_version
 
     width = 60
     sep = "─" * width
 
-    print()
-    print("=" * width)
-    print("  M12Labs Diagnostics")
-    print("=" * width)
+    # Capture all output so we can offer a paste.rs upload at the end.
+    _buf = _io.StringIO()
+
+    def _p(*args, **kwargs) -> None:
+        """print() that writes to both the terminal and the capture buffer."""
+        print(*args, **kwargs)
+        kwargs.pop("end", None)
+        kwargs.pop("file", None)
+        end = "\n"
+        print(*args, end=end, file=_buf, **kwargs)
+
+    _p()
+    _p("=" * width)
+    _p("  M12Labs Diagnostics")
+    _p("=" * width)
 
     # ------------------------------------------------------------------ #
     # 1. Panel status
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print("  Panel Status")
-    print(sep)
+    _p()
+    _p(sep)
+    _p("  Panel Status")
+    _p(sep)
 
     state = detect_panel_state(install_path)
     state_label = {
@@ -522,50 +599,50 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
         "partial":  "Partial (panel files present, .env missing)",
         "fresh":    "Not installed (no panel files found)",
     }.get(state, state)
-    print(f"  Install path : {install_path}")
-    print(f"  State        : {state_label}")
+    _p(f"  Install path : {install_path}")
+    _p(f"  State        : {state_label}")
 
     version = read_installed_version(install_path)
-    print(f"  Version      : {f'v{version}' if version else 'unknown / not installed'}")
+    _p(f"  Version      : {f'v{version}' if version else 'unknown / not installed'}")
 
     env_path = install_path / ".env"
-    print(f"  .env present : {'Yes' if env_path.exists() else 'No'}")
+    _p(f"  .env present : {'Yes' if env_path.exists() else 'No'}")
 
     # ------------------------------------------------------------------ #
     # 2. Panel log
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print(f"  Panel Log  ({_PANEL_LOG_RELATIVE})")
-    print(sep)
+    _p()
+    _p(sep)
+    _p(f"  Panel Log  (storage/logs/laravel-YYYY-MM-DD.log)")
+    _p(sep)
 
-    panel_log = install_path / _PANEL_LOG_RELATIVE
-    if panel_log.exists():
-        print(f"  Log file : {panel_log}")
+    panel_log = _find_latest_panel_log(install_path)
+    if panel_log is not None:
+        _p(f"  Log file : {panel_log}")
         try:
             size = panel_log.stat().st_size
-            print(f"  Size     : {_fmt_size(size)}")
+            _p(f"  Size     : {_fmt_size(size)}")
         except OSError:
             pass
         lines = _tail_file(panel_log, _PANEL_LOG_TAIL_LINES)
         if lines:
-            print(f"  Last {_PANEL_LOG_TAIL_LINES} lines:")
-            print()
+            _p(f"  Last {_PANEL_LOG_TAIL_LINES} lines:")
+            _p()
             for line in lines:
-                print(f"    {line}")
+                _p(f"    {line}")
         else:
-            print("  (log file is empty)")
+            _p("  (log file is empty)")
     else:
-        print(f"  Panel log not found at {panel_log}")
-        print("  (Panel may not be installed or has never produced log output.)")
+        _p(f"  No panel log found under {install_path / _PANEL_LOGS_DIR}")
+        _p("  (Panel may not be installed or has never produced log output.)")
 
     # ------------------------------------------------------------------ #
     # 3. Key directory permissions
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print("  Key Directory / File Permissions")
-    print(sep)
+    _p()
+    _p(sep)
+    _p("  Key Directory / File Permissions")
+    _p(sep)
 
     check_paths = [
         install_path,
@@ -587,19 +664,19 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
                 except Exception:
                     owner = str(st.st_uid)
                     group = str(st.st_gid)
-                print(f"  {mode_str}  {owner}:{group}  {p}")
+                _p(f"  {mode_str}  {owner}:{group}  {p}")
             except OSError:
-                print(f"  (could not stat {p})")
+                _p(f"  (could not stat {p})")
         else:
-            print(f"  (not found) {p}")
+            _p(f"  (not found) {p}")
 
     # ------------------------------------------------------------------ #
     # 4. Service status
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print("  Service Status")
-    print(sep)
+    _p()
+    _p(sep)
+    _p("  Service Status")
+    _p(sep)
 
     def _service_status(service: str) -> str:
         if not shutil.which("systemctl"):
@@ -617,42 +694,42 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
         r = subprocess.run(["php", "--version"], capture_output=True, text=True)
         first_line = (r.stdout or r.stderr or "").splitlines()
         php_ver = first_line[0].strip() if first_line else "unknown"
-    print(f"  PHP CLI          : {php_ver}")
+    _p(f"  PHP CLI          : {php_ver}")
 
     # PHP-FPM – try common service names
     for fpm_svc in ("php8.3-fpm", "php8.2-fpm", "php8.1-fpm", "php-fpm"):
         fpm_status = _service_status(fpm_svc)
         if fpm_status not in ("inactive", "unknown", "systemctl not available"):
-            print(f"  PHP-FPM ({fpm_svc}) : {fpm_status}")
+            _p(f"  PHP-FPM ({fpm_svc}) : {fpm_status}")
             break
     else:
         fpm_status = _service_status("php8.3-fpm")
-        print(f"  PHP-FPM          : {fpm_status}")
+        _p(f"  PHP-FPM          : {fpm_status}")
 
-    print(f"  MariaDB          : {_service_status('mariadb')}")
-    print(f"  Nginx            : {_service_status('nginx')}")
+    _p(f"  MariaDB          : {_service_status('mariadb')}")
+    _p(f"  Nginx            : {_service_status('nginx')}")
 
     # ------------------------------------------------------------------ #
     # 5. System overview
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print("  System Overview")
-    print(sep)
+    _p()
+    _p(sep)
+    _p("  System Overview")
+    _p(sep)
 
-    print(f"  OS               : {platform.platform()}")
-    print(f"  Python           : {platform.python_version()}")
+    _p(f"  OS               : {platform.platform()}")
+    _p(f"  Python           : {platform.python_version()}")
 
     # Disk usage for install_path (or its parent when it doesn't exist)
     disk_target = install_path if install_path.exists() else install_path.parent
     try:
         disk = shutil.disk_usage(disk_target)
-        print(
+        _p(
             f"  Disk ({disk_target}) : "
             f"{_fmt_size(disk.free)} free / {_fmt_size(disk.total)} total"
         )
     except OSError:
-        print("  Disk             : (could not determine)")
+        _p("  Disk             : (could not determine)")
 
     # Memory (Linux /proc/meminfo)
     try:
@@ -663,7 +740,7 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
         mem_total = _meminfo_kb("MemTotal")
         mem_avail = _meminfo_kb("MemAvailable")
         if mem_total and mem_avail:
-            print(
+            _p(
                 f"  RAM              : "
                 f"{_fmt_size(mem_avail)} available / {_fmt_size(mem_total)} total"
             )
@@ -673,46 +750,67 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
     # ------------------------------------------------------------------ #
     # 6. Installer configuration summary
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print("  Installer Configuration")
-    print(sep)
-    print(f"  Install path     : {cfg.install_path}")
-    print(f"  DB name          : {cfg.db_name}")
-    print(f"  DB user          : {cfg.db_user}")
-    print(f"  Selected release : {cfg.selected_release or '(none – use default)'}")
-    print(f"  Non-interactive  : {cfg.non_interactive}")
-    print(f"  Text logs        : {cfg.text_logs_enabled}")
+    _p()
+    _p(sep)
+    _p("  Installer Configuration")
+    _p(sep)
+    _p(f"  Install path     : {cfg.install_path}")
+    _p(f"  DB name          : {cfg.db_name}")
+    _p(f"  DB user          : {cfg.db_user}")
+    _p(f"  Selected release : {cfg.selected_release or '(none – use default)'}")
+    _p(f"  Non-interactive  : {cfg.non_interactive}")
+    _p(f"  Text logs        : {cfg.text_logs_enabled}")
 
     # ------------------------------------------------------------------ #
     # 7. Installer log files
     # ------------------------------------------------------------------ #
-    print()
-    print(sep)
-    print("  Installer Log Files")
-    print(sep)
+    _p()
+    _p(sep)
+    _p("  Installer Log Files")
+    _p(sep)
 
     from installer.log import LOG_DIR_NAME
     log_dir = cfg.install_path / LOG_DIR_NAME
     if log_dir.is_dir():
         log_files = sorted(log_dir.glob("*.txt"), reverse=True)
         if log_files:
-            print(f"  Logs directory : {log_dir}")
+            _p(f"  Logs directory : {log_dir}")
             for lf in log_files[:5]:
                 try:
                     sz = _fmt_size(lf.stat().st_size)
                 except OSError:
                     sz = "?"
-                print(f"    {lf.name}  ({sz})")
+                _p(f"    {lf.name}  ({sz})")
             if len(log_files) > 5:
-                print(f"    … and {len(log_files) - 5} more")
+                _p(f"    … and {len(log_files) - 5} more")
         else:
-            print(f"  Logs directory exists but contains no log files: {log_dir}")
+            _p(f"  Logs directory exists but contains no log files: {log_dir}")
     else:
-        print(f"  No installer logs found (expected at {log_dir})")
+        _p(f"  No installer logs found (expected at {log_dir})")
 
+    _p()
+    _p("=" * width)
+
+    # ------------------------------------------------------------------ #
+    # paste.rs upload
+    # ------------------------------------------------------------------ #
     print()
-    print("=" * width)
+    try:
+        answer = input("  Upload diagnostics to paste.rs for easy sharing? [y/N]: ").strip().lower()
+    except EOFError:
+        answer = "n"
+
+    if answer in ("y", "yes"):
+        print("  Uploading to paste.rs …")
+        ok, result = _upload_to_paste_rs(_buf.getvalue())
+        if ok:
+            print(f"  ✓ Uploaded! Share this link with support:")
+            print(f"    {result}")
+        else:
+            print(f"  ✗ Upload failed: {result}")
+    else:
+        print("  (Skipping upload.)")
+
     _pause_and_clear()
 
 
