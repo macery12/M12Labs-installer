@@ -502,19 +502,16 @@ def _run_install_manual(cfg) -> int | None:
     # Stage 1: dependencies
     action = _stage_prompt(1, total, "Install system dependencies")
     if action == "quit":
-        db_pass = ""
         return None
     if action == "run":
         if not install_dependencies():
             logger.error("Manual install: dependencies failed")
             print("\n✗ Stage 1 failed. See output above.")
-            db_pass = ""
             return 1
 
     # Stage 2: panel files
     action = _stage_prompt(2, total, "Download panel files")
     if action == "quit":
-        db_pass = ""
         return None
     if action == "run":
         if is_develop:
@@ -524,7 +521,6 @@ def _run_install_manual(cfg) -> int | None:
         if not ok:
             logger.error("Manual install: file download/clone failed")
             print("\n✗ Stage 2 failed. See output above.")
-            db_pass = ""
             return 1
 
     # Stage 3: database
@@ -671,6 +667,33 @@ def _run_install(cfg) -> int:
     return 0
 
 
+def _prompt_manual_db_creds_for_update() -> dict[str, str]:
+    """Prompt the user to enter database connection credentials manually.
+
+    Used during the update flow when the user declines to use existing
+    ``.env`` credentials or when no credentials are available.
+
+    Returns a dict with keys ``db_host``, ``db_port``, ``db_name``,
+    ``db_user``, and ``db_pass``.
+    """
+    print("\n  Enter database credentials for the connection check:")
+    try:
+        db_host = input("  DB host   [default: 127.0.0.1]: ").strip() or "127.0.0.1"
+        db_port = input("  DB port   [default: 3306]:      ").strip() or "3306"
+        db_name = input("  DB name:  ").strip()
+        db_user = input("  DB user:  ").strip()
+        db_pass = input("  DB pass:  ").strip()
+    except EOFError:
+        db_host, db_port, db_name, db_user, db_pass = "127.0.0.1", "3306", "", "", ""
+    return {
+        "db_host": db_host,
+        "db_port": db_port,
+        "db_name": db_name,
+        "db_user": db_user,
+        "db_pass": db_pass,
+    }
+
+
 def _run_update(cfg) -> int:
     from installer.config import read_db_credentials_from_env, prompt_for_release
     from installer.log import get_logger, setup_logging
@@ -690,23 +713,61 @@ def _run_update(cfg) -> int:
         db_port = read_env_value(env_path, "DB_PORT") or "3306"
 
         if creds["db_pass"]:
+            # Show the existing credentials and ask the user whether to use them.
+            print(f"\n  Existing DB credentials found in {env_path}:")
+            print(f"    DB name : {creds['db_name'] or '(empty)'}")
+            print(f"    DB user : {creds['db_user'] or '(empty)'}")
+            print(f"    DB host : {db_host}:{db_port}")
+            print("    DB pass : (hidden)")
+            try:
+                answer = input("  Use these DB credentials? [Y/n]: ").strip().lower()
+            except EOFError:
+                answer = ""
+
+            if answer not in ("n", "no"):
+                # Use credentials from .env
+                check_host = db_host
+                check_port = db_port
+                check_name = creds["db_name"]
+                check_user = creds["db_user"]
+                check_pass = creds["db_pass"]
+                if check_name:
+                    cfg.db_name = check_name
+                if check_user:
+                    cfg.db_user = check_user
+            else:
+                # User declined – allow manual entry before the check
+                manual = _prompt_manual_db_creds_for_update()
+                check_host = manual["db_host"]
+                check_port = manual["db_port"]
+                check_name = manual["db_name"]
+                check_user = manual["db_user"]
+                check_pass = manual["db_pass"]
+        else:
+            print("  Note: DB credentials not found in .env.")
+            print("  Please enter credentials manually for the connection check.")
+            manual = _prompt_manual_db_creds_for_update()
+            check_host = manual["db_host"]
+            check_port = manual["db_port"]
+            check_name = manual["db_name"]
+            check_user = manual["db_user"]
+            check_pass = manual["db_pass"]
+
+        if check_pass:
             print(
                 f"\n  Checking database connection "
-                f"({creds['db_user']}@{db_host}:{db_port}/{creds['db_name']})…"
+                f"({check_user}@{check_host}:{check_port}/{check_name})…"
             )
             ok = check_db_connection(
-                db_host=db_host,
-                db_port=db_port,
-                db_name=creds["db_name"],
-                db_user=creds["db_user"],
-                db_pass=creds["db_pass"],
+                db_host=check_host,
+                db_port=check_port,
+                db_name=check_name,
+                db_user=check_user,
+                db_pass=check_pass,
             )
+            check_pass = ""  # clear from memory
             if ok:
                 print("  ✓ Database connection successful.")
-                if creds["db_name"]:
-                    cfg.db_name = creds["db_name"]
-                if creds["db_user"]:
-                    cfg.db_user = creds["db_user"]
             else:
                 print("  ✗ Database connection check failed.")
                 print(
@@ -717,7 +778,7 @@ def _run_update(cfg) -> int:
                 _pause_and_clear()
                 return 1
         else:
-            print("  Note: DB credentials not found in .env – skipping database check.")
+            print("  Note: no DB password provided – skipping database check.")
     else:
         print("  Note: .env not found – skipping database check.")
 

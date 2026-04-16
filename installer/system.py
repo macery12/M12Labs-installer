@@ -11,6 +11,7 @@ Public API::
     get_package_manager() -> str | None
     with_privilege(cmd) -> list[str] | None
     install_packages(pkgs) -> bool
+    mark_apt_cache_stale() -> None
     read_env_value(env_path, key) -> str | None
 """
 
