@@ -110,9 +110,11 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     print(f"  Creating database '{db_name}' and user '{db_user}'…")
     # Pass SQL via stdin so the password never appears in the argument list.
     # Try as root first; fall back to `sudo mysql` (socket auth on Debian/Ubuntu).
-    for attempt, mysql_cmd in enumerate([["mysql", "-u", "root"], ["sudo", "mysql"]]):
+    _mysql_commands = [["mysql", "-u", "root"], ["sudo", "mysql"]]
+    last_result = None
+    for mysql_cmd in _mysql_commands:
         try:
-            result = subprocess.run(
+            last_result = subprocess.run(
                 mysql_cmd,
                 input=sql.encode(),
                 check=False,
@@ -123,23 +125,24 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
             logger.error("mysql binary not found")
             return False
 
-        if result.returncode == 0:
+        if last_result.returncode == 0:
             break
 
-        if attempt == 0:
-            # First attempt failed – try sudo fallback
+        if mysql_cmd is _mysql_commands[0]:
+            # First attempt failed – log and try the sudo fallback silently
             logger.debug(
                 "mysql -u root failed (exit %d); retrying with sudo mysql",
-                result.returncode,
+                last_result.returncode,
             )
-        else:
-            print("  ERROR: MySQL command failed. Check that MariaDB is running")
-            print("         and that the root user can connect without a password,")
-            print("         or re-run as root / with sudo.")
-            if result.stderr:
-                print(result.stderr.decode(errors="replace").strip())
-            logger.error("mysql command exited with code %d", result.returncode)
-            return False
+    else:
+        # All attempts failed
+        print("  ERROR: MySQL command failed. Check that MariaDB is running")
+        print("         and that the root user can connect without a password,")
+        print("         or re-run as root / with sudo.")
+        if last_result and last_result.stderr:
+            print(last_result.stderr.decode(errors="replace").strip())
+        logger.error("mysql command exited with code %d", last_result.returncode if last_result else -1)
+        return False
 
     logger.info("Step 3 complete: database and user created")
     print("  ✓ Database and user created.")

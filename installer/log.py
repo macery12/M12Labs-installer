@@ -56,6 +56,7 @@ def setup_logging(install_path: Path | None, text_logs_enabled: bool) -> logging
     if text_logs_enabled and install_path is not None:
         log_dir = install_path / LOG_DIR_NAME
         log_file: Path | None = None
+
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
