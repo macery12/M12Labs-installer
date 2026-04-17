@@ -294,7 +294,7 @@ def _drop_database(db_name: str, db_user: str) -> bool:
     print(f"  Dropping database '{db_name}' and user '{db_user}'@'127.0.0.1' …")
     _mysql_commands = [["mysql", "-u", "root"], ["sudo", "mysql"]]
     last_result = None
-    for mysql_cmd in _mysql_commands:
+    for i, mysql_cmd in enumerate(_mysql_commands):
         try:
             last_result = subprocess.run(
                 mysql_cmd,
@@ -310,21 +310,23 @@ def _drop_database(db_name: str, db_user: str) -> bool:
         if last_result.returncode == 0:
             break
 
-        if mysql_cmd is _mysql_commands[0]:
+        if i == 0:
             logger.debug(
                 "_drop_database: mysql -u root failed (exit %d); retrying with sudo mysql",
                 last_result.returncode,
             )
     else:
-        stderr = (last_result.stderr.decode(errors="replace").strip() if last_result else "")
+        if last_result is not None:
+            stderr = last_result.stderr.decode(errors="replace").strip()
+            exit_code = last_result.returncode
+        else:
+            stderr = ""
+            exit_code = -1
         print("  ✗ MySQL command failed.  Check that MariaDB is running and that")
         print("    root can connect, or re-run as root / with sudo.")
         if stderr:
             print(f"    {stderr}")
-        logger.error(
-            "_drop_database: mysql exited with code %d",
-            last_result.returncode if last_result else -1,
-        )
+        logger.error("_drop_database: mysql exited with code %d", exit_code)
         return False
 
     logger.info("Dropped database '%s' and user '%s'", db_name, db_user)
@@ -483,6 +485,7 @@ def _offer_backup_before_uninstall(install_path: Path) -> bool:
             print()
             print(f"  ✗ Backup failed: {exc}")
             print("    (Check disk space, permissions, and that the install path exists.)")
+            logger.exception("Backup before uninstall failed")
             print()
             try:
                 proceed = input(
