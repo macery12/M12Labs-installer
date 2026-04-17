@@ -11,6 +11,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Python version guard – must come before any installer imports since
+# tomllib (used by config.py) is only available in the stdlib from 3.11.
+if sys.version_info < (3, 11):
+    print(
+        f"ERROR: Python 3.11 or higher is required (found {sys.version.split()[0]}).\n"
+        "Please upgrade Python and re-run the installer."
+    )
+    sys.exit(1)
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -43,18 +52,9 @@ def _pause_and_clear() -> None:
         input("\n  Press Enter to continue…")
     except EOFError:
         pass
-    os.system("clear")
+    if sys.stdout.isatty():
+        os.system("clear")
 
-
-def _confirm_db_action(message: str) -> bool:
-    """Print *message* and return ``True`` if the user confirms with Y/Enter."""
-    print()
-    print(f"  {message}")
-    try:
-        answer = input("  Proceed? [Y/n]: ").strip().lower()
-    except EOFError:
-        answer = "n"
-    return answer in ("", "y", "yes")
 
 
 # directory prompt
@@ -332,15 +332,6 @@ def _prompt_backup_before_update(install_path: Path) -> bool:
 
 # manage backups sub-menu
 
-def _fmt_size(num_bytes: int) -> str:
-    size = float(num_bytes)
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
-
-
 def _fmt_backup_label(path: "Path") -> str:
     """Return a human-readable label for a backup archive.
 
@@ -368,6 +359,7 @@ def _manage_backups_menu(install_path: Path) -> None:
         list_backups,
         restore_backup,
     )
+    from installer.system import fmt_size as _fmt_size
 
     while True:
         backups = list_backups()
@@ -616,8 +608,10 @@ def _run_install_manual(cfg) -> int | None:
                     print("  ✓ Database connected.")
             else:
                 # New credentials – confirm before creating the database and user.
-                if not _confirm_db_action(
-                    f"About to CREATE database '{cfg.db_name}' and MySQL user '{cfg.db_user}'."
+                from installer.system import confirm
+                if not confirm(
+                    f"About to CREATE database '{cfg.db_name}' and MySQL user '{cfg.db_user}'. Proceed?",
+                    default_yes=True,
                 ):
                     print("  Database setup cancelled.")
                 elif setup_database(cfg.db_name, cfg.db_user, db_pass):
@@ -729,8 +723,10 @@ def _run_install(cfg) -> int:
         return 1
 
     # Confirm before creating the database and user
-    if not _confirm_db_action(
-        f"About to CREATE database '{cfg.db_name}' and MySQL user '{cfg.db_user}'."
+    from installer.system import confirm as _confirm_sys
+    if not _confirm_sys(
+        f"About to CREATE database '{cfg.db_name}' and MySQL user '{cfg.db_user}'. Proceed?",
+        default_yes=True,
     ):
         db_pass = ""
         logger.info("Install cancelled by user before database setup")
@@ -897,7 +893,7 @@ def _run_update(cfg) -> int:
 
     # backup prompt
     if not _prompt_backup_before_update(install_path):
-        return 0
+        return 1
 
     # release selection
     old_ver = read_installed_version(install_path)
@@ -954,7 +950,8 @@ def _run_update(cfg) -> int:
 
     # fetch and replace panel files
     if is_develop:
-        if not clone_panel(install_path):
+        repo_git_url = cfg.selected_repo_git_url or DEVELOP_REPO_GIT_URL
+        if not clone_panel(install_path, repo_url=repo_git_url):
             logger.error("Update aborted: file update (clone) failed")
             print("\n✗ Update failed at file download step. See output above.")
             if not artisan(install_path, "up"):
@@ -977,6 +974,11 @@ def _run_update(cfg) -> int:
     if not update_laravel(install_path):
         logger.error("Update aborted: Laravel refresh failed")
         print("\n✗ Update failed at Laravel refresh step. See output above.")
+        if not artisan(install_path, "up"):
+            print(
+                "  Warning: could not bring application back online"
+                " – run `php artisan up` manually."
+            )
         return 1
 
     # read the version now on disk to confirm the update landed
@@ -996,7 +998,7 @@ def _run_update(cfg) -> int:
 # entry point
 
 def main() -> int:
-    from installer.config import load_config
+    from installer.config import load_config, config_file_exists
     from installer.steps.files import detect_panel_state
 
     print("=" * 60)
@@ -1010,7 +1012,16 @@ def main() -> int:
     _warn_if_not_privileged()
 
     cfg = load_config()
-    cfg = _prompt_install_dir(cfg)
+
+    # Only prompt for the install path when no config file exists yet.
+    # On subsequent runs (config file present), display the saved path and
+    # continue directly to the menu so users running Diagnostics, Backups,
+    # etc. don't have to answer an extra prompt each time.
+    if not config_file_exists():
+        cfg = _prompt_install_dir(cfg)
+    else:
+        print(f"  Install path: {cfg.install_path}")
+
     install_path: Path = cfg.install_path
 
     state = detect_panel_state(install_path)

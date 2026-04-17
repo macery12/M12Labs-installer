@@ -3,8 +3,11 @@
 Translates the ``queue-workers.md`` documentation page:
 
 1. Append the artisan schedule:run cron entry (if not already present).
-2. Write the ``jxctl.service`` systemd unit file.
-3. ``systemctl daemon-reload && systemctl enable --now jxctl.service``.
+2. Write the ``m12labs.service`` systemd unit file.
+3. ``systemctl daemon-reload && systemctl enable --now m12labs.service``.
+
+If the legacy ``jxctl.service`` unit is detected it is disabled and removed
+automatically before the new unit is installed.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 from installer.log import get_logger
-from installer.system import run_command_no_cwd, with_privilege
+from installer.system import run_command, with_privilege
 
 _CRON_ENTRY_TEMPLATE = (
     "* * * * * php {artisan} schedule:run >> /dev/null 2>&1"
@@ -37,7 +40,8 @@ RestartSec=5s
 WantedBy=multi-user.target
 """
 
-_SERVICE_NAME = "jxctl.service"
+_SERVICE_NAME = "m12labs.service"
+_LEGACY_SERVICE_NAME = "jxctl.service"  # renamed; migrated on first run
 _SYSTEMD_UNIT_DIR = Path("/etc/systemd/system")
 
 
@@ -118,10 +122,31 @@ def _install_cron(artisan_bin: str) -> bool:
 
 
 def _install_systemd_service(artisan_bin: str) -> bool:
-    """Write the jxctl.service unit file and enable it."""
+    """Write the m12labs.service unit file and enable it.
+
+    Also migrates the legacy ``jxctl.service`` if it exists: disables and
+    removes it so the system doesn't run two conflicting workers.
+    """
     logger = get_logger()
     unit_content = _SYSTEMD_UNIT_TEMPLATE.format(artisan=artisan_bin)
     unit_path = _SYSTEMD_UNIT_DIR / _SERVICE_NAME
+
+    # ------------------------------------------------------------------
+    # Migrate legacy jxctl.service if present
+    # ------------------------------------------------------------------
+    legacy_path = _SYSTEMD_UNIT_DIR / _LEGACY_SERVICE_NAME
+    if legacy_path.exists():
+        print(f"  Migrating legacy service {_LEGACY_SERVICE_NAME} → {_SERVICE_NAME}…")
+        disable_cmd = with_privilege(["systemctl", "disable", "--now", _LEGACY_SERVICE_NAME])
+        if disable_cmd:
+            run_command(disable_cmd)
+        try:
+            legacy_path.unlink()
+            logger.debug("Removed legacy unit file %s", legacy_path)
+        except OSError:
+            rm_cmd = with_privilege(["rm", "-f", str(legacy_path)])
+            if rm_cmd:
+                run_command(rm_cmd)
 
     print(f"  Writing systemd unit: {unit_path}…")
 
@@ -163,11 +188,11 @@ def _install_systemd_service(artisan_bin: str) -> bool:
     enable_cmd = with_privilege(["systemctl", "enable", "--now", _SERVICE_NAME])
 
     if reload_cmd:
-        if not run_command_no_cwd(reload_cmd):
+        if not run_command(reload_cmd):
             print("  WARNING: systemctl daemon-reload failed.")
             logger.warning("systemctl daemon-reload failed")
     if enable_cmd:
-        if not run_command_no_cwd(enable_cmd):
+        if not run_command(enable_cmd):
             print(f"  WARNING: systemctl enable --now {_SERVICE_NAME} failed.")
             logger.warning("systemctl enable --now %s failed", _SERVICE_NAME)
 

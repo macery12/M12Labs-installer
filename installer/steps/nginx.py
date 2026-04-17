@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from installer.system import install_packages, with_privilege
+from installer.system import confirm, install_packages, with_privilege
 
 _CONF_TEMPLATE = Path(__file__).resolve().parent.parent / "panel.conf"
 _NGINX_SITES_AVAILABLE = Path("/etc/nginx/sites-available")
@@ -43,14 +43,6 @@ def _sudo(cmd: list[str]) -> list[str]:
     return privileged if privileged is not None else cmd
 
 
-def _confirm(prompt: str) -> bool:
-    """Ask a yes/no question; return True only for an explicit 'y'/'yes'."""
-    try:
-        answer = input(f"  {prompt} [y/N]: ").strip().lower()
-    except EOFError:
-        answer = ""
-    return answer in ("y", "yes")
-
 
 # ---------------------------------------------------------------------------
 # Step helpers
@@ -72,7 +64,7 @@ def _show_dns_checklist(domain: str) -> bool:
     print("           Let's Encrypt uses it to verify domain ownership.")
     print("  [ ] 4. Port 443 (HTTPS) is open for future HTTPS traffic.")
     print()
-    return _confirm("All of the above are done – proceed with NGINX and SSL setup?")
+    return confirm("All of the above are done – proceed with NGINX and SSL setup?")
 
 
 def _ensure_nginx() -> bool:
@@ -160,7 +152,7 @@ def _offer_dns01_fallback(domain: str) -> bool:
     print("  Note: you can delete the TXT record from Cloudflare after")
     print("  the certificate is issued — it is only needed during this step.")
     print()
-    if not _confirm(
+    if not confirm(
         f"Start manual DNS-01 certificate request for {domain}?"
     ):
         print("  Fallback cancelled – no certificate was issued.")
@@ -328,17 +320,14 @@ def _write_nginx_config(install_path: Path, domain: str) -> bool:
         print("     but it references a different domain or install path.")
         print("     Overwriting it could break your current NGINX setup.")
         print()
-        if not _confirm("Overwrite the existing config and continue?"):
+        if not confirm("Overwrite the existing config and continue?"):
             print("  Setup cancelled – existing config was not changed.")
             return False
 
     # -- Render and write the config -----------------------------------------
     template = _CONF_TEMPLATE.read_text()
     config = template.replace("<domain>", domain)
-    config = config.replace(
-        "root /var/www/m12labs/public;",
-        f"root {install_path / 'public'};",
-    )
+    config = config.replace("<install_path>", str(install_path))
 
     dest = _NGINX_SITES_AVAILABLE / _CONF_NAME
     print(f"  Writing config to {dest} …")
@@ -411,7 +400,7 @@ def _restart_nginx() -> bool:
     declined (no error in that case).
     """
     print()
-    if not _confirm("Restart nginx now to apply the new configuration?"):
+    if not confirm("Restart nginx now to apply the new configuration?"):
         print("  nginx not restarted.  Run  sudo systemctl restart nginx  when ready.")
         return True
 

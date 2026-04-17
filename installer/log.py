@@ -55,17 +55,33 @@ def setup_logging(install_path: Path | None, text_logs_enabled: bool) -> logging
 
     if text_logs_enabled and install_path is not None:
         log_dir = install_path / LOG_DIR_NAME
+        log_file: Path | None = None
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             log_file = log_dir / f"logs-{timestamp}.txt"
-            file_handler = logging.FileHandler(log_file, encoding="utf-8")
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
-            logger.addHandler(file_handler)
         except OSError:
-            # If the log directory or file cannot be created, continue without file logging
             pass
+
+        # Fall back to /tmp when install_path doesn't exist yet or isn't writable
+        if log_file is None or not log_file.parent.exists():
+            try:
+                import tempfile as _tempfile
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                tmp_dir = Path(_tempfile.gettempdir())
+                log_file = tmp_dir / f"m12labs-installer-{timestamp}.log"
+            except OSError:
+                log_file = None
+
+        if log_file is not None:
+            try:
+                file_handler = logging.FileHandler(log_file, encoding="utf-8")
+                file_handler.setLevel(logging.DEBUG)
+                file_handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
+                logger.addHandler(file_handler)
+            except OSError:
+                # If the log file cannot be created, continue without file logging
+                pass
 
     return logger
 

@@ -1,18 +1,19 @@
 """System helpers for the M12Labs panel installer.
 
-Provides command execution, package management, and privilege helpers.
-Modelled after archive/installer/build.py but without Node/pnpm-specific logic.
+Provides command execution, package management, privilege helpers, and
+shared UI utilities.
 
 Public API::
 
     run_command(cmd, cwd=None) -> bool
-    run_command_no_cwd(cmd) -> bool
     run_as_www_data(cmd, cwd=None) -> bool
     get_package_manager() -> str | None
     with_privilege(cmd) -> list[str] | None
     install_packages(pkgs) -> bool
     mark_apt_cache_stale() -> None
     read_env_value(env_path, key) -> str | None
+    fmt_size(num_bytes) -> str
+    confirm(prompt, default_yes=False) -> bool
 """
 
 from __future__ import annotations
@@ -103,14 +104,6 @@ def run_command(cmd: Sequence[str], cwd: Path | None = None) -> bool:
         print(f"Command not found: {cmd[0]}")
         return False
 
-
-def run_command_no_cwd(cmd: Sequence[str]) -> bool:
-    """Run *cmd* without a specific working directory.
-
-    Identical to :func:`run_command` with ``cwd=None`` but kept as a
-    distinct function to match the pattern from ``installer/build.py``.
-    """
-    return run_command(cmd, cwd=None)
 
 
 def run_as_www_data(cmd: Sequence[str], cwd: Path | None = None) -> bool:
@@ -217,8 +210,38 @@ def install_packages(packages: Sequence[str]) -> bool:
 
     print(f"Installing packages via {package_manager}: {', '.join(packages)}")
     if update_cmd:
-        if not run_command_no_cwd(update_cmd):
+        if not run_command(update_cmd):
             return False
         if package_manager == "apt-get":
             _apt_cache_fresh = True
-    return run_command_no_cwd(install_cmd)
+    return run_command(install_cmd)
+
+
+def fmt_size(num_bytes: int) -> str:
+    """Return *num_bytes* formatted as a human-readable string (e.g. ``1.4 MB``)."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def confirm(prompt: str, default_yes: bool = False) -> bool:
+    """Print *prompt* and return ``True`` when the user confirms.
+
+    When *default_yes* is ``True`` the hint shows ``[Y/n]`` and a bare Enter
+    is treated as *yes*.  When ``False`` the hint shows ``[y/N]`` and a bare
+    Enter is treated as *no*.
+
+    Always returns ``False`` on :class:`EOFError` (non-interactive / piped
+    input) regardless of *default_yes*, so automated runs fail-safe.
+    """
+    hint = "[Y/n]" if default_yes else "[y/N]"
+    try:
+        answer = input(f"  {prompt} {hint}: ").strip().lower()
+    except EOFError:
+        return False
+    if default_yes:
+        return answer not in ("n", "no")
+    return answer in ("y", "yes")

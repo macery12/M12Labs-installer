@@ -1,13 +1,11 @@
-"""GitHub release fetching, selection, and download for the M12 Labs setup installer."""
+"""GitHub release fetching and selection for the M12 Labs setup installer."""
 
 from __future__ import annotations
 
 import json
 import logging
-import tarfile
 import urllib.error
 import urllib.request
-import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -223,88 +221,3 @@ def prompt_release_selection(
 
         print("\nInvalid option.")
 
-
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
-def download_archive(url: str, dest_dir: Path, filename: str) -> Path:
-    """Download *url* to *dest_dir/filename*, printing a live progress line.
-
-    Returns the full path to the saved file.
-    Raises ``urllib.error.URLError`` on network failures.
-    """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / filename
-
-    _logger.info("Downloading %s -> %s", url, dest_path)
-    req = urllib.request.Request(url, headers={"User-Agent": "M12Labs-installer"})
-
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        downloaded = 0
-        chunk_size = 8192
-        with dest_path.open("wb") as fh:
-            while True:
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                fh.write(chunk)
-                downloaded += len(chunk)
-                if total:
-                    pct = downloaded * 100 // total
-                    kb_done = downloaded // 1024
-                    kb_total = total // 1024
-                    print(
-                        f"\r  Downloading… {pct}%  ({kb_done} KB / {kb_total} KB)   ",
-                        end="",
-                        flush=True,
-                    )
-                else:
-                    print(
-                        f"\r  Downloading… {downloaded // 1024} KB   ",
-                        end="",
-                        flush=True,
-                    )
-
-    print()  # newline after progress line
-    _logger.info("Download complete: %s (%d bytes)", dest_path, downloaded)
-    return dest_path
-
-
-# ---------------------------------------------------------------------------
-# Extraction
-# ---------------------------------------------------------------------------
-
-def extract_archive(archive_path: Path, dest_dir: Path) -> Path:
-    """Extract a ``.zip`` or ``.tar.gz`` archive into *dest_dir*.
-
-    Returns the path to the top-level content directory inside the archive
-    (GitHub source archives always contain a single top-level folder).  If
-    the archive has no single top-level directory, *dest_dir* itself is
-    returned.
-
-    Raises ``ValueError`` for unrecognised formats, ``OSError`` / ``tarfile``
-    / ``zipfile`` exceptions on corrupt archives.
-    """
-    name = archive_path.name
-    _logger.info("Extracting %s -> %s", archive_path, dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    if name.endswith(".tar.gz") or name.endswith(".tgz"):
-        with tarfile.open(archive_path, "r:gz") as tf:
-            tf.extractall(dest_dir)
-    elif name.endswith(".zip") or zipfile.is_zipfile(archive_path):
-        with zipfile.ZipFile(archive_path) as zf:
-            zf.extractall(dest_dir)
-    else:
-        raise ValueError(f"Unrecognised archive format: {name!r}")
-
-    # GitHub archives always extract to a single top-level directory.
-    entries = [p for p in dest_dir.iterdir() if p.is_dir()]
-    if len(entries) == 1:
-        _logger.debug("Extracted top-level directory: %s", entries[0])
-        return entries[0]
-
-    _logger.debug("Archive has no single top-level directory; using %s", dest_dir)
-    return dest_dir

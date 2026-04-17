@@ -19,7 +19,8 @@ import subprocess
 from pathlib import Path
 
 from installer.log import get_logger
-from installer.system import run_command, run_command_no_cwd, with_privilege
+from installer.steps.releases import DEVELOP_REPO_GIT_URL
+from installer.system import run_command, with_privilege
 
 # Fixed release URL for v2.0.0-m12-rc2.6.
 # Update this constant when a new panel version is released.
@@ -27,8 +28,6 @@ DEFAULT_RELEASE_URL = (
     "https://github.com/macery12/M12Labs/releases/download/"
     "v2.0.0-m12-rc2.6/panel.tar.gz"
 )
-
-DEVELOP_REPO_GIT_URL = "https://github.com/macery12/M12Labs.git"
 
 _TARBALL_NAME = "panel.tar.gz"
 
@@ -69,24 +68,6 @@ def detect_panel_state(install_path: Path) -> str:
     return "fresh"
 
 
-def detect_existing_panel(install_path: Path) -> bool:
-    """Return ``True`` when an M12Labs panel installation is detected at *install_path*.
-
-    Detection criteria (all must be present):
-    * ``artisan``          – Laravel console entry-point
-    * ``composer.json``    – PHP dependency manifest
-    * ``package.json`` **or** ``.git`` – marks the directory as a genuine panel
-      checkout rather than an arbitrary directory that happens to have a few PHP
-      files in it.
-    """
-    if not install_path.is_dir():
-        return False
-    has_artisan = (install_path / "artisan").exists()
-    has_composer = (install_path / "composer.json").exists()
-    has_marker = (install_path / "package.json").exists() or (install_path / ".git").exists()
-    return has_artisan and has_composer and has_marker
-
-
 def download_panel(
     install_path: Path,
     release_url: str | None = None,
@@ -107,6 +88,11 @@ def download_panel(
     """
     if not release_url:
         release_url = DEFAULT_RELEASE_URL
+        print(
+            f"  Warning: no release selected – using fallback {DEFAULT_RELEASE_URL!r}."
+            "\n  This may not be the latest version.  Re-run and select a release"
+            "\n  from the release list to install the latest version."
+        )
     logger = get_logger()
     logger.info("Step 2: Downloading panel from %s to %s", release_url, install_path)
     print("\n[2/5] Downloading panel files…")
@@ -121,7 +107,7 @@ def download_panel(
             # Fall back to privileged mkdir if permissions block us
             logger.warning("mkdir failed (%s) – trying with privilege", exc)
             mkdir_cmd = with_privilege(["mkdir", "-p", str(install_path)])
-            if not mkdir_cmd or not run_command_no_cwd(mkdir_cmd):
+            if not mkdir_cmd or not run_command(mkdir_cmd):
                 print(f"  ERROR: could not create {install_path}")
                 logger.error("Failed to create install directory: %s", install_path)
                 return False
@@ -186,7 +172,7 @@ def _remove_dir(path: Path, logger) -> bool:
     except OSError as exc:
         logger.warning("rmtree failed (%s) – trying with privilege", exc)
         rm_cmd = with_privilege(["rm", "-rf", str(path)])
-        if rm_cmd and run_command_no_cwd(rm_cmd):
+        if rm_cmd and run_command(rm_cmd):
             logger.debug("Removed directory (privileged): %s", path)
             return True
         logger.error("Could not remove directory: %s", path)
@@ -201,14 +187,14 @@ def _set_permissions(install_path: Path, logger) -> None:
         if target.exists():
             chmod_cmd = with_privilege(["chmod", "-R", "755", str(target)])
             if chmod_cmd:
-                run_command_no_cwd(chmod_cmd)
+                run_command(chmod_cmd)
 
     print("  Setting ownership to www-data:www-data…")
     chown_cmd = with_privilege(
         ["chown", "-R", "www-data:www-data", str(install_path)]
     )
     if chown_cmd:
-        if not run_command_no_cwd(chown_cmd):
+        if not run_command(chown_cmd):
             logger.warning("chown failed – continuing")
             print("  Warning: could not set www-data ownership.")
 
@@ -317,7 +303,7 @@ def clone_panel(
     except OSError as exc:
         logger.warning("parent mkdir failed (%s) – trying with privilege", exc)
         mkdir_cmd = with_privilege(["mkdir", "-p", str(install_path.parent)])
-        if not mkdir_cmd or not run_command_no_cwd(mkdir_cmd):
+        if not mkdir_cmd or not run_command(mkdir_cmd):
             print(f"  ERROR: could not create parent directory {install_path.parent}")
             logger.error("Failed to create parent directory: %s", install_path.parent)
             return False

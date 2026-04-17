@@ -9,11 +9,8 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Backups are stored inside the repo root under a "backups/" folder so they
-# are always in a predictable, easy-to-find location next to the installer.
-_INSTALLER_PKG = Path(__file__).resolve().parent   # installer/backup/
-_REPO_ROOT = _INSTALLER_PKG.parent.parent           # repo root
-DEFAULT_BACKUPS_DIR: Path = _REPO_ROOT / "backups"
+# Backups are stored at a system-level path that survives installer re-clones.
+DEFAULT_BACKUPS_DIR: Path = Path("/var/backups/m12labs")
 
 
 def create_backup(install_path: Path, backups_dir: Path | None = None) -> Path:
