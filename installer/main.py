@@ -101,7 +101,7 @@ def _show_menu() -> str:
     print("  ─────────────────────────────")
     print("  1) Install")
     print("  2) Update")
-    print("  3) Uninstall  (coming soon)")
+    print("  3) Uninstall")
     print("  4) Database Tools")
     print("  5) Webserver")
     print("  6) Manage Backups")
@@ -995,6 +995,43 @@ def _run_update(cfg) -> int:
     return 0
 
 
+# uninstall sub-menu
+
+def _uninstall_menu(cfg) -> None:
+    """Show the Uninstall submenu and dispatch to the chosen uninstall flow."""
+    from installer.steps.uninstall import uninstall_files_only, uninstall_full
+
+    install_path: Path = cfg.install_path
+    db_name: str = cfg.db_name
+    db_user: str = cfg.db_user
+
+    while True:
+        print()
+        print("  Uninstall:")
+        print("  ─────────────────────────────")
+        print("  1) Remove panel files only")
+        print("  2) Full uninstall  (files + nginx + database)")
+        print("  3) Back")
+        print()
+        try:
+            choice = input("  Select an option [1/2/3]: ").strip().lower()
+        except EOFError:
+            break
+
+        if choice == "1":
+            uninstall_files_only(install_path)
+            _pause_and_clear()
+            break
+        elif choice == "2":
+            uninstall_full(install_path, db_name, db_user)
+            _pause_and_clear()
+            break
+        elif choice in ("3", "b", "back", "q"):
+            break
+        else:
+            print("  Invalid option. Please enter 1, 2, or 3.")
+
+
 # entry point
 
 def main() -> int:
@@ -1046,9 +1083,9 @@ def main() -> int:
                 return _run_update(cfg)
 
         elif choice == "3":
-            print()
-            print("  Uninstall is not yet implemented.")
-            print("  (This feature is coming in a future release.)")
+            _uninstall_menu(cfg)
+            # Refresh panel state after a potential uninstall
+            state = detect_panel_state(install_path)
 
         elif choice == "4":
             _database_tools(install_path)
