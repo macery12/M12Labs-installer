@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from installer.log import get_logger
-from installer.system import read_env_value, run_as_www_data, run_command_no_cwd, with_privilege
+from installer.system import read_env_value, run_as_www_data, run_command, with_privilege
 
 
 def artisan(install_path: Path, *args: str) -> bool:
@@ -26,11 +26,16 @@ def _read_env_value(env_path: Path, key: str) -> str | None:
 
 
 def _patch_env(env_path: Path, db_name: str, db_user: str, db_pass: str) -> None:
-    """Overwrite DB_* entries in an existing ``.env`` file.
+    """Overwrite DB_* entries in an existing ``.env`` file using an atomic write.
 
     Only lines whose keys match exactly are replaced; all other content is
     left unchanged.  The function never logs or prints the password value.
+    Uses a tempfile-then-replace pattern so a crash mid-write cannot corrupt
+    the ``.env``.
     """
+    import os as _os
+    import tempfile as _tempfile
+
     text = env_path.read_text(encoding="utf-8")
 
     replacements = {
@@ -48,7 +53,21 @@ def _patch_env(env_path: Path, db_name: str, db_user: str, db_pass: str) -> None
             # Key absent – append it
             text = text.rstrip("\n") + f"\n{key}={value}\n"
 
-    env_path.write_text(text, encoding="utf-8")
+    # Write atomically: temp file in the same directory → fsync → os.replace
+    parent = env_path.parent
+    fd, tmp_path = _tempfile.mkstemp(dir=parent, prefix=".env_tmp_")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            _os.fsync(fh.fileno())
+        _os.replace(tmp_path, env_path)
+    except Exception:
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def configure_laravel(
@@ -124,7 +143,7 @@ def configure_laravel(
     # Ensure www-data owns .env so artisan key:generate can write to it
     chown_env_cmd = with_privilege(["chown", "www-data:www-data", str(env_path)])
     if chown_env_cmd:
-        run_command_no_cwd(chown_env_cmd)
+        run_command(chown_env_cmd)
 
     # Artisan commands
     # Only generate a new APP_KEY when one is not already present.
@@ -157,7 +176,7 @@ def configure_laravel(
         ["chown", "-R", "www-data:www-data", str(install_path)]
     )
     if chown_cmd:
-        run_command_no_cwd(chown_cmd)
+        run_command(chown_cmd)
 
     logger.info("Step 4 complete: Laravel environment configured")
     print("  ✓ Laravel environment configured.")
@@ -228,7 +247,7 @@ def update_laravel(install_path: Path) -> bool:
         ["chown", "-R", "www-data:www-data", str(install_path)]
     )
     if chown_cmd:
-        run_command_no_cwd(chown_cmd)
+        run_command(chown_cmd)
 
     # Bring application back online
     print("  Bringing application back online…")

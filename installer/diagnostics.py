@@ -19,6 +19,8 @@ import stat as _stat
 import subprocess
 from pathlib import Path
 
+from installer.system import fmt_size as _fmt_size
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -61,15 +63,6 @@ _SERVICE_LOG_TAIL_LINES = 30
 # ---------------------------------------------------------------------------
 # Small utilities
 # ---------------------------------------------------------------------------
-
-def _fmt_size(num_bytes: int) -> str:
-    size = float(num_bytes)
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
-
 
 def _redact_line(line: str) -> str:
     """Replace secret values in *line* with ``[REDACTED]``."""
@@ -397,7 +390,8 @@ def run_diagnostics(install_path: Path, cfg) -> None:
     _p(f"  Nginx            : {_service_status('nginx')}")
     _p(f"  Wings            : {_service_status('wings')}")
     _p(f"  Redis            : {_service_status('redis-server')}")
-    _p(f"  jxctl worker     : {_service_status('jxctl')}")
+    _p(f"  jxctl worker     : {_service_status('jxctl')} (legacy)")
+    _p(f"  m12labs worker   : {_service_status('m12labs')}")
 
     # ------------------------------------------------------------------ #
     # 5. Wings details
@@ -692,7 +686,6 @@ def run_diagnostics(install_path: Path, cfg) -> None:
     _p(f"  DB name          : {cfg.db_name}")
     _p(f"  DB user          : {cfg.db_user}")
     _p(f"  Selected release : {cfg.selected_release or '(none – use default)'}")
-    _p(f"  Non-interactive  : {cfg.non_interactive}")
     _p(f"  Text logs        : {cfg.text_logs_enabled}")
 
     # ------------------------------------------------------------------ #

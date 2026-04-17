@@ -59,7 +59,7 @@ printf '\n'
 # ---------------------------------------------------------------------------
 
 have git     || die "git is required but not found.  Install git and re-run."
-have python3 || die "python3 is required but not found.  Install Python 3.10+ and re-run."
+have python3 || die "python3 is required but not found.  Install Python 3.11+ and re-run."
 
 # ---------------------------------------------------------------------------
 # Parse flags   (-y/--yes skips the prompt; --confirmed is for internal re-exec)
@@ -157,7 +157,17 @@ fi
 # Run the Python installer
 # ---------------------------------------------------------------------------
 
+# Strip shell-only flags (--confirmed, -y, --yes) before forwarding so that
+# Python does not receive flags it cannot parse.
+_PY_ARGS=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --confirmed|-y|--yes) ;;  # consumed by the shell script; not for Python
+        *) _PY_ARGS+=("$_arg") ;;
+    esac
+done
+
 cd "$INSTALL_DIR"
 info "Launching M12Labs installer..."
 printf '\n'
-exec python3 -m installer.main "$@"
+exec python3 -m installer.main "${_PY_ARGS[@]}"

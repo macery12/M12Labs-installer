@@ -108,27 +108,40 @@ def setup_database(db_name: str, db_user: str, db_pass: str) -> bool:
     )
 
     print(f"  Creating database '{db_name}' and user '{db_user}'…")
-    # Pass SQL via stdin so the password never appears in the argument list
-    try:
-        result = subprocess.run(
-            ["mysql", "-u", "root"],
-            input=sql.encode(),
-            check=False,
-            capture_output=True,
-        )
-    except FileNotFoundError:
-        print("  ERROR: mysql command not found.")
-        logger.error("mysql binary not found")
-        return False
+    # Pass SQL via stdin so the password never appears in the argument list.
+    # Try as root first; fall back to `sudo mysql` (socket auth on Debian/Ubuntu).
+    _mysql_commands = [["mysql", "-u", "root"], ["sudo", "mysql"]]
+    last_result = None
+    for mysql_cmd in _mysql_commands:
+        try:
+            last_result = subprocess.run(
+                mysql_cmd,
+                input=sql.encode(),
+                check=False,
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            print("  ERROR: mysql command not found.")
+            logger.error("mysql binary not found")
+            return False
 
-    if result.returncode != 0:
+        if last_result.returncode == 0:
+            break
+
+        if mysql_cmd is _mysql_commands[0]:
+            # First attempt failed – log and try the sudo fallback silently
+            logger.debug(
+                "mysql -u root failed (exit %d); retrying with sudo mysql",
+                last_result.returncode,
+            )
+    else:
+        # All attempts failed
         print("  ERROR: MySQL command failed. Check that MariaDB is running")
         print("         and that the root user can connect without a password,")
-        print("         or re-run with `sudo`.")
-        # Print stderr to help diagnose (never contains the password)
-        if result.stderr:
-            print(result.stderr.decode(errors="replace").strip())
-        logger.error("mysql command exited with code %d", result.returncode)
+        print("         or re-run as root / with sudo.")
+        if last_result and last_result.stderr:
+            print(last_result.stderr.decode(errors="replace").strip())
+        logger.error("mysql command exited with code %d", last_result.returncode if last_result else -1)
         return False
 
     logger.info("Step 3 complete: database and user created")
@@ -284,69 +297,3 @@ def database_exists(
     stdout = result.stdout.decode(errors="replace")
     return db_name in stdout
 
-
-def check_db_connection(
-    db_host: str,
-    db_name: str,
-    db_user: str,
-    db_pass: str,
-    db_port: str = "3306",
-) -> bool:
-    """Test whether a database connection can be established with the given credentials.
-
-    This function is read-only and never creates any database objects.
-    If you need to distinguish between an authentication failure and a
-    missing database, use :func:`check_credentials` followed by
-    :func:`database_exists` instead.
-
-    The password is passed via the ``MYSQL_PWD`` environment variable so it
-    never appears in the process argument list.
-
-    Args:
-        db_host: MySQL/MariaDB host (e.g. ``127.0.0.1``).
-        db_name: Database name to connect to.
-        db_user: Database user.
-        db_pass: Database password (never logged or persisted).
-        db_port: TCP port (default: ``"3306"``).
-
-    Returns:
-        ``True`` when the connection succeeds, ``False`` otherwise.
-    """
-    logger = get_logger()
-
-    if not shutil.which("mysql"):
-        logger.warning("check_db_connection: mysql client not found")
-        return False
-
-    env = os.environ.copy()
-    env["MYSQL_PWD"] = db_pass
-
-    try:
-        result = subprocess.run(
-            [
-                "mysql",
-                "-h", db_host,
-                "-P", str(db_port),
-                "-u", db_user,
-                db_name,
-                "-e", "SELECT 1;",
-            ],
-            env=env,
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("check_db_connection: connection timed out")
-        return False
-    except FileNotFoundError:
-        logger.warning("check_db_connection: mysql binary not found")
-        return False
-
-    success = result.returncode == 0
-    if not success:
-        stderr = result.stderr.decode(errors="replace").strip()
-        logger.debug(
-            "check_db_connection failed (exit %d): %s", result.returncode, stderr
-        )
-    return success

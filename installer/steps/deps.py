@@ -19,7 +19,7 @@ from installer.system import (
     get_package_manager,
     install_packages,
     mark_apt_cache_stale,
-    run_command_no_cwd,
+    run_command,
     with_privilege,
 )
 
@@ -88,7 +88,7 @@ def install_dependencies() -> bool:
         )
         if add_repo_cmd:
             env_cmd = ["env", "LC_ALL=C.UTF-8", *add_repo_cmd]
-            if not run_command_no_cwd(env_cmd):
+            if not run_command(env_cmd):
                 logger.warning("add-apt-repository failed; continuing without PPA")
                 print("  Warning: could not add ondrej/php PPA – continuing anyway.")
 
@@ -127,14 +127,14 @@ def _ensure_composer() -> bool:
         return False
 
     # Download installer to a temp file and run it
-    download_ok = run_command_no_cwd(
+    download_ok = run_command(
         ["curl", "-sS", "-o", "/tmp/composer-setup.php", _COMPOSER_INSTALLER_URL]
     )
     if not download_ok:
         print("  ERROR: failed to download Composer installer.")
         return False
 
-    install_ok = run_command_no_cwd(
+    install_ok = run_command(
         ["php", "/tmp/composer-setup.php", "--install-dir=/usr/local/bin", "--filename=composer"]
     )
     if not install_ok:

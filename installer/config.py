@@ -1,7 +1,11 @@
 """Config management for the M12Labs panel installer.
 
-Reads and writes ``installer/config.toml`` using ``tomllib``.
+Reads and writes ``/etc/m12labs/config.toml`` using ``tomllib``.
 Creates the file with sensible defaults when it does not exist.
+
+If the legacy location (``installer/config.toml`` inside the repo) still
+exists it is migrated automatically on first load and then removed so
+that config survives installer re-clones.
 
 **Security:** The database password is NEVER persisted to disk by this
 module.  It is collected from the user (or auto-generated) once, held
@@ -13,7 +17,6 @@ File format (TOML)::
     install_path = "/var/www/m12labs"
     db_name = "jexactyldb"
     db_user = "jexactyluser"
-    non_interactive = false
     text_logs_enabled = true
 """
 
@@ -32,8 +35,10 @@ DEFAULT_INSTALL_PATH: Path = Path("/var/www/m12labs")
 DEFAULT_DB_NAME: str = "jexactyldb"
 DEFAULT_DB_USER: str = "jexactyluser"
 
-# Config file lives next to this source file so it stays with the installer
-_CONFIG_FILE = Path(__file__).parent / "config.toml"
+# Primary config location – survives installer re-clones.
+_CONFIG_FILE = Path("/etc/m12labs/config.toml")
+# Legacy location inside the installer repo (pre-migration).
+_LEGACY_CONFIG_FILE = Path(__file__).parent / "config.toml"
 
 _logger = logging.getLogger("m12labs.setup")
 
@@ -54,17 +59,56 @@ class InstallConfig:
     selected_release: str = ""
     selected_release_url: str = ""
     selected_repo_git_url: str = ""
-    non_interactive: bool = False
     text_logs_enabled: bool = True
 
 
+def config_file_exists() -> bool:
+    """Return ``True`` when the primary config file exists on disk."""
+    return _CONFIG_FILE.exists()
+
+
 def load_config() -> InstallConfig:
-    """Load config from ``config.toml``, returning defaults if missing or invalid."""
+    """Load config from the primary location, migrating from the legacy path if needed.
+
+    Migration: if ``/etc/m12labs/config.toml`` does not exist but the legacy
+    ``installer/config.toml`` does, the legacy file is read, written to the
+    new location, and then removed.  This ensures config survives installer
+    re-clones performed by ``setup.sh``.
+
+    Returns defaults when neither file exists or both are unreadable.
+    """
+    # ------------------------------------------------------------------ #
+    # Migration from legacy location
+    # ------------------------------------------------------------------ #
+    if not _CONFIG_FILE.exists() and _LEGACY_CONFIG_FILE.exists():
+        _logger.debug(
+            "Migrating config from legacy location %s → %s",
+            _LEGACY_CONFIG_FILE,
+            _CONFIG_FILE,
+        )
+        try:
+            cfg = _load_from_path(_LEGACY_CONFIG_FILE)
+            save_config(cfg)
+            try:
+                _LEGACY_CONFIG_FILE.unlink()
+                _logger.debug("Removed legacy config file %s", _LEGACY_CONFIG_FILE)
+            except OSError as exc:
+                _logger.debug("Could not remove legacy config %s: %s", _LEGACY_CONFIG_FILE, exc)
+            return cfg
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("Migration failed (%s) – loading legacy directly", exc)
+            return _load_from_path(_LEGACY_CONFIG_FILE)
+
+    return _load_from_path(_CONFIG_FILE)
+
+
+def _load_from_path(path: Path) -> InstallConfig:
+    """Read and parse a TOML config file; return defaults on any error."""
     try:
-        with _CONFIG_FILE.open("rb") as fh:
+        with path.open("rb") as fh:
             data = tomllib.load(fh)
     except OSError:
-        _logger.debug("Config file not found or unreadable (%s) – using defaults", _CONFIG_FILE)
+        _logger.debug("Config file not found or unreadable (%s) – using defaults", path)
         return InstallConfig()
 
     install_path_str = str(data.get("install_path", "")).strip()
@@ -78,7 +122,6 @@ def load_config() -> InstallConfig:
         selected_release=str(data.get("selected_release", "")).strip(),
         selected_release_url=str(data.get("selected_release_url", "")).strip(),
         selected_repo_git_url=str(data.get("selected_repo_git_url", "")).strip(),
-        non_interactive=bool(data.get("non_interactive", False)),
         text_logs_enabled=bool(data.get("text_logs_enabled", True)),
     )
     _logger.debug(
@@ -92,7 +135,9 @@ def load_config() -> InstallConfig:
 
 
 def save_config(cfg: InstallConfig) -> None:
-    """Write all config fields to ``config.toml`` using an atomic write.
+    """Write all config fields to ``/etc/m12labs/config.toml`` using an atomic write.
+
+    Creates ``/etc/m12labs/`` if it does not exist.
 
     **The database password is never written by this function.**
     """
@@ -103,12 +148,17 @@ def save_config(cfg: InstallConfig) -> None:
         f'selected_release = "{cfg.selected_release}"',
         f'selected_release_url = "{cfg.selected_release_url}"',
         f'selected_repo_git_url = "{cfg.selected_repo_git_url}"',
-        f"non_interactive = {str(cfg.non_interactive).lower()}",
         f"text_logs_enabled = {str(cfg.text_logs_enabled).lower()}",
     ]
     content = "\n".join(lines) + "\n"
 
     config_dir = _CONFIG_FILE.parent
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _logger.error("Failed to create config directory %s: %s", config_dir, exc)
+        raise
+
     try:
         fd, tmp_path = tempfile.mkstemp(dir=config_dir, prefix=".config_tmp_", suffix=".toml")
         try:
