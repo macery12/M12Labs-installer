@@ -72,16 +72,23 @@ def configure_workers(install_path: Path) -> bool:
 
 
 def _install_cron(artisan_bin: str) -> bool:
-    """Add the artisan schedule:run cron entry for www-data (idempotent)."""
+    """Add the artisan schedule:run cron entry for root (idempotent).
+
+    The entry is installed in root's crontab so it is visible when an
+    administrator runs ``crontab -e`` (as root).  This matches the documented
+    setup procedure:
+
+        * * * * * php /path/to/artisan schedule:run > /dev/null 2>&1
+    """
     logger = get_logger()
     entry = _CRON_ENTRY_TEMPLATE.format(artisan=artisan_bin)
 
-    print("  Checking crontab for www-data…")
+    print("  Checking root crontab…")
 
-    # Read current crontab for www-data; empty string if none set yet
+    # Read current root crontab; empty string if none set yet
     try:
         result = subprocess.run(
-            ["crontab", "-u", "www-data", "-l"],
+            ["crontab", "-l"],
             capture_output=True,
             text=True,
             check=False,
@@ -102,7 +109,7 @@ def _install_cron(artisan_bin: str) -> bool:
 
     try:
         proc = subprocess.run(
-            ["crontab", "-u", "www-data", "-"],
+            ["crontab", "-"],
             input=new_crontab.encode(),
             check=False,
         )
@@ -116,7 +123,8 @@ def _install_cron(artisan_bin: str) -> bool:
         logger.warning("crontab update failed (exit %d)", proc.returncode)
         # Non-fatal; the user can add it manually
     else:
-        logger.debug("Cron entry added for www-data")
+        logger.debug("Cron entry added for root")
+        print(f"  ✓ Cron entry added.  Verify with: crontab -l")
 
     return True
 
