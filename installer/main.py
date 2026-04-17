@@ -484,7 +484,7 @@ _SECRET_REDACT_RE = re.compile(
     r"[A-Z_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|AUTH|CREDENTIAL)[A-Z_]*\s*=\s*"  # ENV
     r"|[\w]*(?:password|passwd|token|secret|key|auth|credential)[\w]*\s*:\s*"      # YAML
     r")"
-    r"(\S+)",
+    r"""('[^']*'|"[^"]*"|\S+)""",  # value: single-quoted, double-quoted, or bare token
 )
 
 # Well-known Wings daemon config paths.
@@ -569,8 +569,8 @@ def _wings_config_summary(config_path: Path) -> list[str]:
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        # Capture YAML key: value at top-level and one level of indent
-        m = re.match(r"^(\s*)(\w+)\s*:\s*(.*)", raw_line)
+        # Capture YAML key (word chars or hyphens): value at top-level and one level of indent
+        m = re.match(r"^(\s*)([\w-]+)\s*:\s*(.*)", raw_line)
         if m:
             key = m.group(2).lower()
             if key in interesting:
@@ -791,19 +791,17 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
             r = subprocess.run(
                 ["php", "--version"], capture_output=True, text=True, timeout=5,
             )
-            first_line = (r.stdout or r.stderr or "").splitlines()
-            php_ver = first_line[0].strip() if first_line else "unknown"
+            php_output_lines = (r.stdout or r.stderr or "").splitlines()
+            php_ver = php_output_lines[0].strip() if php_output_lines else "unknown"
         except subprocess.TimeoutExpired:
             php_ver = "timeout"
     _p(f"  PHP CLI          : {php_ver}")
 
     # PHP-FPM – try common service names
-    active_fpm_svc = None
     for fpm_svc in ("php8.3-fpm", "php8.2-fpm", "php8.1-fpm", "php-fpm"):
         fpm_status = _service_status(fpm_svc)
         if fpm_status not in ("inactive", "unknown", "systemctl not available"):
             _p(f"  PHP-FPM          : {fpm_status} ({fpm_svc})")
-            active_fpm_svc = fpm_svc
             break
     else:
         fpm_status = _service_status("php8.3-fpm")
@@ -1086,7 +1084,7 @@ def _run_diagnostics(install_path: Path, cfg) -> None:
     try:
         meminfo = Path("/proc/meminfo").read_text(encoding="utf-8")
         def _meminfo_kb(key: str) -> int | None:
-            m = re.search(rf"^{key}:\s+(\d+)", meminfo, re.MULTILINE)
+            m = re.search(rf"^{re.escape(key)}:\s+(\d+)", meminfo, re.MULTILINE)
             return int(m.group(1)) * 1024 if m else None
         mem_total = _meminfo_kb("MemTotal")
         mem_avail = _meminfo_kb("MemAvailable")
