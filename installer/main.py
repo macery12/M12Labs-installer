@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -104,10 +105,11 @@ def _show_menu() -> str:
     print("  4) Database Tools")
     print("  5) Webserver")
     print("  6) Manage Backups")
+    print("  7) Diagnostics")
     print("  q) Quit")
     print()
     try:
-        choice = input("  Select an option [1/2/3/4/5/6/q]: ").strip().lower()
+        choice = input("  Select an option [1/2/3/4/5/6/7/q]: ").strip().lower()
     except EOFError:
         choice = "q"
     return choice
@@ -346,7 +348,7 @@ def _fmt_backup_label(path: "Path") -> str:
     formats it as ``YYYY-MM-DD HH:MM:SS UTC``.  Falls back to the raw
     filename if the stamp cannot be parsed.
     """
-    import re, datetime as _dt
+    import datetime as _dt
     m = re.search(r"(\d{8})_(\d{6})", path.stem)
     if m:
         try:
@@ -1046,12 +1048,17 @@ def main() -> int:
         elif choice == "6":
             _manage_backups_menu(install_path)
 
+        elif choice == "7":
+            from installer.diagnostics import run_diagnostics
+            run_diagnostics(install_path, cfg)
+            _pause_and_clear()
+
         elif choice in ("q", "quit", "exit"):
             print("\nExiting installer. No changes were made.")
             return 0
 
         else:
-            print("  Invalid option. Please enter 1, 2, 3, 4, 5, 6, or q.")
+            print("  Invalid option. Please enter 1, 2, 3, 4, 5, 6, 7, or q.")
 
 
 if __name__ == "__main__":
