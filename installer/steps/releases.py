@@ -39,11 +39,6 @@ RELEASE_REPOS: list[RepoSource] = [
         api_url="https://api.github.com/repos/macery12/M12Labs/releases",
         git_url="https://github.com/macery12/M12Labs.git",
     ),
-    RepoSource(
-        name="Jexactyl",
-        api_url="https://api.github.com/repos/Jexactyl/Jexactyl/releases",
-        git_url="https://github.com/Jexactyl/Jexactyl.git",
-    ),
 ]
 
 # ---------------------------------------------------------------------------
